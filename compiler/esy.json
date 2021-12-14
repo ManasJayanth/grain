@@ -2,9 +2,7 @@
   "name": "@grain/compiler",
   "version": "0.4.4",
   "esy": {
-    "build": [
-      "dune build --no-buffer"
-    ],
+    "build": ["dune build --no-buffer"],
     "buildEnv": {
       "DUNE_BUILD_DIR": "#{self.target_dir}",
       "GRAIN_STDLIB": "#{self.root / '..' / 'stdlib'}",
@@ -43,17 +41,28 @@
     "@opam/sexplib": ">= 0.14.0",
     "@opam/utf8": "0.1.0",
     "@opam/yojson": ">= 1.7.0",
-    "ocaml": "4.11.0"
+    "ocaml": "4.12.0"
   },
   "devDependencies": {
     "@opam/js_of_ocaml-compiler": ">= 3.11.0",
-    "@opam/ocaml-lsp-server": "1.4.1",
+    "@opam/ocaml-lsp-server": "*",
     "@reason-native/rely": "^3.2.1"
   },
   "resolutions": {
+    "ocaml": "4.12.0",
     "@opam/ocamlfind": "1.8.1",
+    "@grain/binaryen.ml": "grain-lang/binaryen.ml#c41b0fdb1f37ddbb0b9d37070a2d39197dfdeef9",
     "@opam/fp": "facebookexperimental/reason-native:fp.opam#a33f1528a6dd86c67f365e226c81312733181c87",
     "@opam/fs": "facebookexperimental/reason-native:fs.opam#a33f1528a6dd86c67f365e226c81312733181c87",
+    "esy-cmake": "grain-lang/CMake#1cead3871bbb27a45adab2263ef2dff4a38a8869",
+    "@opam/conf-cmake": {
+      "source": "no-source:",
+      "override": {
+        "dependencies": {
+          "esy-cmake": "*"
+        }
+      }
+    },
     "@opam/utf8": "facebookexperimental/reason-native:utf8.opam#a33f1528a6dd86c67f365e226c81312733181c87"
   },
   "installConfig": {

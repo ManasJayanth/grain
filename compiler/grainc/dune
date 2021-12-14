@@ -9,6 +9,7 @@
  (flags
   (:standard
    (:include ./config/flags.sexp)))
+ (ocamlopt_flags -cc clang++)
  (libraries grain grain_diagnostics binaryen.native dune-build-info))
 
 (rule

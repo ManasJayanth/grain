@@ -14,6 +14,7 @@
  (flags
   (:standard
    (:include ./config/flags.sexp)))
+ (ocamlopt_flags -cc clang++)
  (libraries cmdliner grain grain_diagnostics grain_utils graindoc.docblock
    binaryen.native dune-build-info)
  (preprocess
