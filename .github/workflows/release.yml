@@ -47,7 +47,6 @@ jobs:
       contents: write
     needs:
       - build
-      - static-build
     runs-on: macos-latest
     steps:
       - uses: actions/setup-node@v4
