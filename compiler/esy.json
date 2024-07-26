@@ -2,9 +2,7 @@
   "name": "@grain/compiler",
   "version": "0.6.4",
   "esy": {
-    "build": [
-      "dune build @native --no-buffer"
-    ],
+    "build": ["dune build @native --no-buffer"],
     "buildEnv": {
       "DUNE_BUILD_DIR": "#{self.target_dir}",
       "GRAIN_STDLIB": "#{self.root / '..' / 'stdlib'}",
@@ -69,6 +67,6 @@
     "@opam/rely": "reasonml/reason-native:rely.opam#fcb74949f8dcbe68f10d4daaee6b9b864b5baff0"
   },
   "installConfig": {
-    "pnp": false
+    "pnp": true
   }
 }
