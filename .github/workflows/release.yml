@@ -25,7 +25,7 @@ jobs:
           submodules: true
       - run: git fetch --tags
         name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
-      - uses: esy/github-action@v2-beta.4
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
         with:
           working-directory: compiler
           source-cache-key: 20240713-1
@@ -33,7 +33,7 @@ jobs:
       # TODO
       # - run: node .ci/validate-release-postinstall.js
       #   name: "Validate release-postinstall.js"
-      - uses: esy/github-action@v2-beta.4
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
         if: ${{ runner.os != 'Linux' }}
         id: prepare-npm-artifacts
         with:
@@ -59,7 +59,7 @@ jobs:
           submodules: true
       - run: git fetch --tags
         name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
-      - uses: esy/github-action@v2-beta.4
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
         with:
           source-cache-key: 20240713-1
           cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
