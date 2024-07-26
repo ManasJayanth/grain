@@ -2,6 +2,11 @@
   "name": "@grain/compiler",
   "version": "0.6.4",
   "esy": {
+    "release": {
+      "rewritePrefix": false,
+      "includePackages": ["root"],
+      "bin": ["grainc.exe"]
+    },
     "build": ["dune build @native --no-buffer"],
     "buildEnv": {
       "DUNE_BUILD_DIR": "#{self.target_dir}",
