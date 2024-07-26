@@ -1,0 +1,83 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:        
+      - '**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest, macos-13]
+    steps:
+      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1000
+          fetch-tags: false # https://github.com/actions/checkout/issues/1467
+          submodules: true
+      - run: git fetch --tags
+        name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
+      - uses: esy/github-action@v2-beta.4
+        with:
+          working-directory: compiler
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+      # TODO
+      # - run: node .ci/validate-release-postinstall.js
+      #   name: "Validate release-postinstall.js"
+      - uses: esy/github-action@v2-beta.4
+        if: ${{ runner.os != 'Linux' }}
+        id: prepare-npm-artifacts
+        with:
+          working-directory: compiler
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+          prepare-npm-artifacts-mode: true
+
+  bundle:
+    permissions:
+      contents: write
+    needs:
+      - build
+      - static-build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+          fetch-tags: false # https://github.com/actions/checkout/issues/1467
+          submodules: true
+      - run: git fetch --tags
+        name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
+      - uses: esy/github-action@v2-beta.4
+        with:
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+          bundle-npm-artifacts-mode: true
+
+      - name: Create tarball
+        run: tar cf npm-release.tgz ./_npm-release
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: npm-release.tgz
+
+      - name: Publish to NPM registry
+        working-directory: _npm-release
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+        run: npm publish --tag=dev --access=public .
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
