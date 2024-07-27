@@ -10,12 +10,53 @@ No other changes yet.
 </details>
 
 ```grain
-import Regex from "regex"
+from "regex" include Regex
 ```
+
+## Types
+
+Type declarations included in the Regex module.
+
+### Regex.**RegularExpression**
+
+```grain
+type RegularExpression
+```
+
+### Regex.**MatchResult**
+
+<details disabled>
+<summary tabindex="-1">Added in <code>0.4.3</code></summary>
+No other changes yet.
+</details>
+
+```grain
+record MatchResult {
+  group: Number => Option<String>,
+  groupPosition: Number => Option<(Number, Number)>,
+  numGroups: Number,
+  allGroups: () => Array<Option<String>>,
+  allGroupPositions: () => Array<Option<(Number, Number)>>,
+}
+```
+
+This object contains the results
+of a regular expression match. The results can be obtained using
+the following accessors:
+
+Fields:
+
+|name|type|description|
+|----|----|-----------|
+|`group`|`Number => Option<String>`|Returns the contents of the given group. Note that group 0 contains<br/>the entire matched substring, and group 1 contains the first parenthesized group.|
+|`groupPosition`|`Number => Option<(Number, Number)>`|Returns the position of the given group|
+|`numGroups`|`Number`|Returns the number of defined groups in this match object (includes group 0)|
+|`allGroups`|`() => Array<Option<String>>`|Returns the contents of all groups matched in this match object|
+|`allGroupPositions`|`() => Array<Option<(Number, Number)>>`|Returns the positions of all groups matched in this match object|
 
 ## Values
 
-Functions for working with regular expressions.
+Functions and constants included in the Regex module.
 
 ### Regex.**make**
 
@@ -25,7 +66,7 @@ No other changes yet.
 </details>
 
 ```grain
-make : String -> Result<RegularExpression, String>
+make : (regexString: String) => Result<RegularExpression, String>
 ```
 
 Compiles the given pattern string into a regular expression object.
@@ -62,17 +103,17 @@ The special character sequences are as follows:
 - `(«re»)` - Matches `«re»`, storing the result in a group
 - `(?:«re»)` - Matches `«re»` without storing the result in a group
 - `(?«mode»:«re») - Matches `«re»` with the mode settings specified by `«mode»` using the following syntax:
-- `«mode»i` - The same as `«mode»`, but with case-insensitivity enabled (temporarily not supported until grain-lang/grain#661 is resolved)
-- `«mode»-i` - The same as `«mode»`, but with case-insensitivity disabled (the default)
-- `«mode»m` / `«mode»-s` - The same as `«mode»`, but with multi-line mode enabled
-- `«mode»-m` / `«mode»s` - The same as `«mode»`, but with multi-line mode disabled
-- An empty string, which will not change any mode settings
+  - `«mode»i` - The same as `«mode»`, but with case-insensitivity enabled (temporarily not supported until grain-lang/grain#661 is resolved)
+  - `«mode»-i` - The same as `«mode»`, but with case-insensitivity disabled (the default)
+  - `«mode»m` / `«mode»-s` - The same as `«mode»`, but with multi-line mode enabled
+  - `«mode»-m` / `«mode»s` - The same as `«mode»`, but with multi-line mode disabled
+  - An empty string, which will not change any mode settings
 - `(?«tst»«re1»|«re2»)` - Will match `«re1»` if `«tst»`, otherwise will match `«re2»`. The following options are available for `«tst»`
-- `(«n»)` - Will be true if group `«n»` has a match
-- `(?=«re»)` - Will be true if `«re»` matches the next sequence
-- `(?!«re»)` - Will be true if `«re»` does not match the next sequence
-- `(?<=«re»)` - Will be true if `«re»` matches the preceding sequence
-- `(?<!«re»)` - Will be true if `«re»` does not match the preceding sequence
+  - `(«n»)` - Will be true if group `«n»` has a match
+  - `(?=«re»)` - Will be true if `«re»` matches the next sequence
+  - `(?!«re»)` - Will be true if `«re»` does not match the next sequence
+  - `(?<=«re»)` - Will be true if `«re»` matches the preceding sequence
+  - `(?<!«re»)` - Will be true if `«re»` does not match the preceding sequence
 - `(?«tst»«re»)` - Equivalent to `(?«tst»«re»|)`
 - Finally, basic classes (defined below) can also appear outside of character ranges.
 
@@ -130,53 +171,6 @@ Examples:
 Regex.make("(foo|bar)[0-9]+")
 ```
 
-### Regex.**MatchResult**
-
-```grain
-record MatchResult {
-  group: Number -> Option<String>,
-  groupPosition: Number -> Option<(Number, Number)>,
-  numGroups: Number,
-  allGroups: () -> Array<Option<String>>,
-  allGroupPositions: () -> Array<Option<(Number, Number)>>,
-}
-```
-
-This object contains the results
-of a regular expression match. The results can be obtained using
-the following accessors:
-
-```grain
-group : Number -> Option<String>
-```
-
-Returns the contents of the given group. Note that group 0 contains
-the entire matched substring, and group 1 contains the first parenthesized group.
-
-```grain
-groupPosition : Number -> Option<(Number, Number)>
-```
-
-Returns the position of the given group.
-
-```grain
-numGroups : Number
-```
-
-The number of defined groups in this match object (including group 0).
-
-```grain
-allGroups : () -> Array<Option<String>>
-```
-
-Returns the contents of all groups matched in this match object.
-
-```grain
-allGroupPositions : () -> Array<Option<(Number, Number)>>
-```
-
-Returns the positions of all groups matched in this match object.
-
 ### Regex.**isMatch**
 
 <details disabled>
@@ -185,7 +179,7 @@ No other changes yet.
 </details>
 
 ```grain
-isMatch : (RegularExpression, String) -> Bool
+isMatch : (rx: RegularExpression, string: String) => Bool
 ```
 
 Determines if the given regular expression has a match in the given string.
@@ -201,7 +195,7 @@ Returns:
 
 |type|description|
 |----|-----------|
-|`Bool`|`true` if the RegExp matches the string, otherwise `false`|
+|`Bool`|`true` if the RegExp matches the string or `false` otherwise|
 
 Examples:
 
@@ -217,7 +211,8 @@ No other changes yet.
 </details>
 
 ```grain
-isMatchRange : (RegularExpression, String, Number, Number) -> Bool
+isMatchRange :
+  (rx: RegularExpression, string: String, start: Number, end: Number) => Bool
 ```
 
 Determines if the given regular expression has a match in the given string between the given start/end offsets.
@@ -255,7 +250,7 @@ No other changes yet.
 </details>
 
 ```grain
-find : (RegularExpression, String) -> Option<MatchResult>
+find : (rx: RegularExpression, string: String) => Option<MatchResult>
 ```
 
 Returns the first match for the given regular expression contained within the given string.
@@ -288,7 +283,8 @@ No other changes yet.
 
 ```grain
 findRange :
-  (RegularExpression, String, Number, Number) -> Option<MatchResult>
+  (rx: RegularExpression, string: String, start: Number, end: Number) =>
+   Option<MatchResult>
 ```
 
 Returns the first match for the given regular expression contained within the given string
@@ -318,7 +314,7 @@ Regex.findRange(Result.unwrap(Regex.make("ca+[at]")), "caaat", 0, 5)
 ### Regex.**findAll**
 
 ```grain
-findAll : (RegularExpression, String) -> List<MatchResult>
+findAll : (rx: RegularExpression, string: String) => List<MatchResult>
 ```
 
 Returns all matches for the given regular expression contained within the given string.
@@ -345,7 +341,8 @@ No other changes yet.
 
 ```grain
 findAllRange :
-  (RegularExpression, String, Number, Number) -> List<MatchResult>
+  (rx: RegularExpression, string: String, start: Number, end: Number) =>
+   List<MatchResult>
 ```
 
 Returns all matches for the given regular expression contained within the given string
@@ -380,7 +377,8 @@ No other changes yet.
 </details>
 
 ```grain
-replace : (RegularExpression, String, String) -> String
+replace :
+  (rx: RegularExpression, toSearch: String, replacement: String) => String
 ```
 
 Replaces the first match for the given regular expression contained within the given string with the specified replacement.
@@ -421,7 +419,8 @@ No other changes yet.
 </details>
 
 ```grain
-replaceAll : (RegularExpression, String, String) -> String
+replaceAll :
+  (rx: RegularExpression, toSearch: String, replacement: String) => String
 ```
 
 Replaces all matches for the given regular expression contained within the given string with the specified replacement.
@@ -445,5 +444,75 @@ Examples:
 
 ```grain
 assert Regex.replaceAll(Result.unwrap(Regex.make("o")), "skoot", "r") == "skrrt"
+```
+
+### Regex.**split**
+
+<details disabled>
+<summary tabindex="-1">Added in <code>0.5.5</code></summary>
+No other changes yet.
+</details>
+
+```grain
+split : (rx: RegularExpression, str: String) => List<String>
+```
+
+Splits the given string at the first match for the given regular expression.
+
+If the regex pattern contains capture groups, the content of the groups
+will be included in the output list.
+
+Parameters:
+
+|param|type|description|
+|-----|----|-----------|
+|`rx`|`RegularExpression`|The regular expression to match|
+|`str`|`String`|The string to split|
+
+Returns:
+
+|type|description|
+|----|-----------|
+|`List<String>`|A list of the split segments|
+
+Examples:
+
+```grain
+assert Regex.split(Result.unwrap(Regex.make(",")), "a,b,c") == [ "a", "b,c" ]
+```
+
+### Regex.**splitAll**
+
+<details disabled>
+<summary tabindex="-1">Added in <code>0.5.5</code></summary>
+No other changes yet.
+</details>
+
+```grain
+splitAll : (rx: RegularExpression, str: String) => List<String>
+```
+
+Splits the given string at every match for the given regular expression.
+
+If the regex pattern contains capture groups, the content of the groups
+will be included in the output list.
+
+Parameters:
+
+|param|type|description|
+|-----|----|-----------|
+|`rx`|`RegularExpression`|The regular expression to match|
+|`str`|`String`|The string to split|
+
+Returns:
+
+|type|description|
+|----|-----------|
+|`List<String>`|A list of the split segments|
+
+Examples:
+
+```grain
+assert Regex.splitAll(Result.unwrap(Regex.make(",")), "a,b,c") == [ "a", "b", "c" ]
 ```
 

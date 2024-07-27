@@ -1,7 +1,8 @@
 # This Dockerfile constructs a minimal environment in which Grain programs can be compiled.
 # The environment is only meant to build Grain programs, not develop the compiler.
 
-FROM node:16-slim
+FROM ospencer/esy:alpine as esy
+FROM node:18 as builder
 
 LABEL name="Grain"
 LABEL description="Grain CLI"
@@ -12,24 +13,31 @@ COPY . /grain
 
 WORKDIR /grain
 
+# esy does not currently ship linux/arm64 binaries, so we manually patch it in
+
+# Install dependencies but don't allow esy's postinstall script to run
+RUN npm ci --ignore-scripts
+# This line is technically incorrect on amd64, but docker does not support
+# conditional copies and the arm64 folder is ignored on amd64 anyway
+COPY --from=esy /app/_release /grain/node_modules/esy/platform-linux-arm64
+# Manually run esy's postinstall script
+RUN cd node_modules/esy && npm run postinstall
+
+# Necessary because we disabled scripts during the original install
+RUN npm run prepare
+
 # Build the compiler and CLI
-RUN apt-get update && \
-    # Install necessary build tools to build the Grain compiler
-    apt-get install git curl zlib1g build-essential -y && \
-    # Install all JavaScript dependencies
-    yarn --pure-lockfile && \
-    # Build the Grain compiler
-    yarn compiler build && \
-    # Remove all node modules and only install modules necessary to run the CLI (no dev dependencies)
-    yarn cache clean && \
-    rm -rf node_modules && \
-    NODE_ENV=production yarn --pure-lockfile && \
-    # Remove all esy build files
-    rm -rf compiler/_esy && \
-    rm -rf ~/.esy && \
-    # Remove all of the build tooling and apt lists
-    apt-get remove build-essential -y && \
-    rm -rf /var/lib/apt/lists/*
+RUN npm run compiler build \
+    # Remove build files
+    && rm -rf compiler/_esy
+
+FROM node:18-slim
+
+COPY --from=builder /grain /grain
+WORKDIR /grain
+
+# Link CLI in new image
+RUN npm run cli link
 
 # Set up container environment
 WORKDIR /

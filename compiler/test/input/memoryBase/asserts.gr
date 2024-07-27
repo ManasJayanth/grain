@@ -1,0 +1,18 @@
+module Asserts
+
+from "runtime/unsafe/wasmi32" include WasmI32
+
+@unsafe
+primitive heapStart = "@heap.start"
+@unsafe
+primitive typeMetadata = "@heap.type_metadata"
+
+@unsafe
+let doTest = () => {
+  use WasmI32.{ (==), (>), (<) }
+  assert typeMetadata() == 0x110008n
+  assert heapStart() > 0x110008n
+  assert heapStart() < 0x110308n
+}
+
+doTest()

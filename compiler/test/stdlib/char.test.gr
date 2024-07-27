@@ -1,6 +1,8 @@
-import Char from "char"
-import String from "string"
-import Array from "array"
+module CharTest
+
+from "char" include Char
+from "string" include String
+from "array" include Array
 
 // isValid
 
@@ -38,18 +40,72 @@ assert Char.code(Char.pred(Char.fromCode(0xE000))) == 0xD7FF
 assert Char.toString('f') == "f"
 assert Char.toString('💯') == "💯"
 
-
 // issue #927
-let chars = [> '\u{1F3F4}', '\u{E0067}' ]
+let chars = [> '\u{1F3F4}', '\u{E0067}']
 let mut charPosition = 0
 let len = 2
 let mut done = false
 
 while (!done) {
-	if (charPosition >= len) {
-		break
-	}
-	
-	Char.code(chars[charPosition])
-	charPosition = charPosition + 1
+  if (charPosition >= len) {
+    break
+  }
+
+  Char.code(chars[charPosition])
+  charPosition += 1
 }
+
+// <
+use Char.{ (<) }
+assert 'a' < 'z'
+assert 'a' < 'b'
+assert 'A' < 'Z'
+assert !('z' < 'a')
+
+// <=
+use Char.{ (<=) }
+assert 'a' <= 'z'
+assert 'a' <= 'b'
+assert 'A' <= 'Z'
+assert !('z' <= 'a')
+assert 'z' <= 'z'
+assert 'Z' <= 'Z'
+
+// >
+use Char.{ (>) }
+assert 'z' > 'a'
+assert 'b' > 'a'
+assert 'Z' > 'A'
+assert !('a' > 'b')
+
+// >=
+use Char.{ (>=) }
+assert 'z' >= 'a'
+assert 'b' >= 'a'
+assert 'Z' >= 'A'
+assert !('a' >= 'b')
+assert 'a' >= 'a'
+assert 'B' >= 'B'
+
+// isAsciiDigit
+assert Char.isAsciiDigit('1')
+assert !Char.isAsciiDigit('a')
+assert !Char.isAsciiDigit('🌾')
+
+// isAsciiAlpha
+assert !Char.isAsciiAlpha('1')
+assert Char.isAsciiAlpha('a')
+assert Char.isAsciiAlpha('Z')
+assert !Char.isAsciiAlpha('λ')
+
+// toAsciiLowercase
+assert Char.toAsciiLowercase('A') == 'a'
+assert Char.toAsciiLowercase('a') == 'a'
+assert Char.toAsciiLowercase('1') == '1'
+assert Char.toAsciiLowercase('λ') == 'λ'
+
+// toAsciiUppercase
+assert Char.toAsciiUppercase('a') == 'A'
+assert Char.toAsciiUppercase('A') == 'A'
+assert Char.toAsciiUppercase('1') == '1'
+assert Char.toAsciiUppercase('λ') == 'λ'

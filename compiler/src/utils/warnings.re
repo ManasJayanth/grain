@@ -6,6 +6,20 @@ type loc = {
   loc_ghost: bool,
 };
 
+type number_type =
+  | Int8
+  | Int16
+  | Int32
+  | Int64
+  | Uint8
+  | Uint16
+  | Uint32
+  | Uint64
+  | Float32
+  | Float64
+  | Rational
+  | BigInt;
+
 type t =
   | LetRecNonFunction(string)
   | AmbiguousName(list(string), list(string), bool)
@@ -23,7 +37,14 @@ type t =
   | UnreachableCase
   | ShadowConstructor(string)
   | NoCmiFile(string, option(string))
-  | FuncWasmUnsafe(string);
+  | FuncWasmUnsafe(string, string, string)
+  | FromNumberLiteral(number_type, string, string)
+  | UselessRecordSpread
+  | PrintUnsafe(string)
+  | ToStringUnsafe(string)
+  | ArrayIndexNonInteger(string);
+
+let last_warning_number = 22;
 
 let number =
   fun
@@ -43,9 +64,12 @@ let number =
   | NoCmiFile(_) => 14
   | NonClosedRecordPattern(_) => 15
   | UnusedExtension => 16
-  | FuncWasmUnsafe(_) => 17;
-
-let last_warning_number = 17;
+  | FuncWasmUnsafe(_, _, _) => 17
+  | FromNumberLiteral(_, _, _) => 18
+  | UselessRecordSpread => 19
+  | PrintUnsafe(_) => 20
+  | ToStringUnsafe(_) => 21
+  | ArrayIndexNonInteger(_) => last_warning_number;
 
 let message =
   fun
@@ -92,7 +116,7 @@ let message =
   | UnusedMatch => "this match case is unused."
   | UnusedPat => "this sub-pattern is unused."
   | UnusedExtension => "this type extension is unused."
-  | UnreachableCase => "this mach case is unreachable."
+  | UnreachableCase => "this match case is unreachable."
   | ShadowConstructor(s) =>
     "the pattern variable " ++ s ++ " shadows a constructor of the same name."
   | NoCmiFile(name, None) =>
@@ -104,11 +128,54 @@ let message =
       msg,
     )
   | NonClosedRecordPattern(s) =>
-    "the following fields are missing from the record pattern: " ++ s
-  | FuncWasmUnsafe(func) =>
+    "the following fields are missing from the record pattern: "
+    ++ s
+    ++ "\nUse `_` to ignore unused fields."
+  | FuncWasmUnsafe(func, f, m) =>
     "it looks like you are using "
     ++ func
-    ++ " on two unsafe Wasm values here.\nThis is generally unsafe and will cause errors. Use one of the equivalent functions in `WasmI32`, `WasmI64`, `WasmF32`, or `WasmF64` instead.";
+    ++ " on two unsafe Wasm values here.\nThis is generally unsafe and will cause errors. Use "
+    ++ f
+    ++ " from the `"
+    ++ m
+    ++ "` module the instead."
+  | FromNumberLiteral(mod_type, mod_name, n) => {
+      let literal =
+        switch (mod_type) {
+        | Int8 => Printf.sprintf("%ss", n)
+        | Int16 => Printf.sprintf("%sS", n)
+        | Int32 => Printf.sprintf("%sl", n)
+        | Int64 => Printf.sprintf("%sL", n)
+        | Uint8 => Printf.sprintf("%sus", n)
+        | Uint16 => Printf.sprintf("%suS", n)
+        | Uint32 => Printf.sprintf("%sul", n)
+        | Uint64 => Printf.sprintf("%suL", n)
+        | Float32 =>
+          Printf.sprintf("%sf", String.contains(n, '.') ? n : n ++ ".")
+
+        | Float64 =>
+          Printf.sprintf("%sd", String.contains(n, '.') ? n : n ++ ".")
+        | Rational =>
+          Printf.sprintf("%sr", String.contains(n, '/') ? n : n ++ "/1")
+        | BigInt => Printf.sprintf("%st", n)
+        };
+      Printf.sprintf(
+        "it looks like you are calling %s.fromNumber() with a constant number. Try using the literal syntax (e.g. `%s`) instead.",
+        mod_name,
+        literal,
+      );
+    }
+  | UselessRecordSpread => "this record spread is useless as all of the record's fields are overridden."
+  | PrintUnsafe(typ) =>
+    "it looks like you are using `print` on an unsafe Wasm value here.\nThis is generally unsafe and will cause errors. Use `DebugPrint.print`"
+    ++ typ
+    ++ " from the `runtime/debugPrint` module instead."
+  | ToStringUnsafe(typ) =>
+    "it looks like you are using `toString` on an unsafe Wasm value here.\nThis is generally unsafe and will cause errors. Use `DebugPrint.toString`"
+    ++ typ
+    ++ " from the `runtime/debugPrint` module instead."
+  | ArrayIndexNonInteger(idx) =>
+    "Array index should be an integer, but found `" ++ idx ++ "`.";
 
 let sub_locs =
   fun
@@ -137,7 +204,7 @@ let nerrors = ref(0);
 let defaults = [
   LetRecNonFunction(""),
   AmbiguousName([], [], false),
-  // [FIXME] see if we can reenable (grain-lang/grain#681)
+  // TODO(#681): Look into reenabling these
   //NotPrincipal(""),
   //NameOutOfScope("", [], false),
   StatementType,
@@ -150,7 +217,12 @@ let defaults = [
   UnreachableCase,
   ShadowConstructor(""),
   NoCmiFile("", None),
-  FuncWasmUnsafe(""),
+  FuncWasmUnsafe("", "", ""),
+  FromNumberLiteral(Int8, "", ""),
+  UselessRecordSpread,
+  PrintUnsafe(""),
+  ToStringUnsafe(""),
+  ArrayIndexNonInteger(""),
 ];
 
 let _ = List.iter(x => current^.active[number(x)] = true, defaults);

@@ -2,7 +2,12 @@ open Types;
 
 let rec get_allocation_type = (env, ty) => {
   switch (ty.desc) {
-  | TTyConstr(path, _, _) => Env.find_type(path, env).type_allocation
+  | TTyConstr(path, _, _) =>
+    try(Env.find_type(path, env).type_allocation) {
+    // Types not in the environment come from other modules and are nested in
+    // types we do know about; we treat them as Managed Grain values.
+    | Not_found => Managed
+    }
   | TTySubst(linked)
   | TTyLink(linked) => get_allocation_type(env, linked)
   | TTyVar(_)
@@ -10,7 +15,7 @@ let rec get_allocation_type = (env, ty) => {
   | TTyTuple(_)
   | TTyRecord(_)
   | TTyUniVar(_)
-  | TTyPoly(_) => HeapAllocated
+  | TTyPoly(_) => Managed
   };
 };
 
@@ -19,10 +24,12 @@ let rec get_fn_allocation_type = (env, ty) => {
   | TTySubst(linked)
   | TTyLink(linked) => get_fn_allocation_type(env, linked)
   | TTyArrow(args, ret, _) => (
-      List.map(get_allocation_type(env), args),
+      List.map(((_, arg)) => get_allocation_type(env, arg), args),
       get_allocation_type(env, ret),
     )
-  | TTyConstr(_)
+  | TTyConstr(path, args, _) =>
+    let (ty_args, ty, _) = Env.find_type_expansion(path, env);
+    get_fn_allocation_type(env, Ctype.apply(env, ty_args, ty, args));
   | TTyVar(_)
   | TTyTuple(_)
   | TTyRecord(_)
@@ -61,12 +68,14 @@ let rec is_void = ty => {
   };
 };
 
-let rec returns_void = ty => {
+let rec returns_void = (env, ty) => {
   switch (ty.desc) {
   | TTySubst(linked)
-  | TTyLink(linked) => returns_void(linked)
+  | TTyLink(linked) => returns_void(env, linked)
   | TTyArrow(args, ret, _) => is_void(ret)
-  | TTyConstr(_)
+  | TTyConstr(path, args, _) =>
+    let (ty_args, ty, _) = Env.find_type_expansion(path, env);
+    returns_void(env, Ctype.apply(env, ty_args, ty, args));
   | TTyVar(_)
   | TTyTuple(_)
   | TTyRecord(_)
@@ -78,22 +87,26 @@ let rec returns_void = ty => {
 
 let wasm_repr_of_allocation_type = alloc_type => {
   switch (alloc_type) {
-  | StackAllocated(repr) => repr
-  | HeapAllocated => WasmI32
+  | Unmanaged(repr) => repr
+  | Managed => WasmI32
   };
 };
 
+let allocation_type_of_wasm_repr = repr => {
+  Unmanaged(repr);
+};
+
 let repr_of_type = (env, ty) =>
-  if (is_function(ty)) {
+  if (is_function(Ctype.full_expand(env, ty))) {
     let (args, ret) = get_fn_allocation_type(env, ty);
     let args = List.map(wasm_repr_of_allocation_type, args);
     let rets =
-      if (returns_void(ty)) {
+      if (returns_void(env, ty)) {
         [];
       } else {
         [wasm_repr_of_allocation_type(ret)];
       };
-    ReprFunction(args, rets);
+    ReprFunction(args, rets, Unknown);
   } else {
     ReprValue(wasm_repr_of_allocation_type(get_allocation_type(env, ty)));
   };

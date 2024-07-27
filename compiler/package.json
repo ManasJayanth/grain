@@ -1,29 +1,44 @@
 {
   "name": "@grain/compiler",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.6.4",
   "bin": {
     "grainc": "_esy/default/build/install/default/bin/grainc"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=18.15"
   },
   "devDependencies": {
-    "esy": "0.6.12"
+    "esy": "0.6.12",
+    "shx": "^0.3.4"
   },
   "scripts": {
-    "link": "yarn link",
+    "link": "npm link",
     "clean": "esy clean",
     "prepare": "esy install",
+    "prebuild": "npm run clean --workspace=@grain/cli",
     "build": "esy",
     "postbuild": "esy copy:exe",
-    "build:js": "esy b dune build --no-buffer --profile jsoo",
+    "build:js": "esy build:js",
     "postbuild:js": "esy copy:js",
-    "pretest": "esy",
+    "pretest": "npm run build",
     "test": "esy test",
+    "pretest:js": "npm run build:js",
+    "test:js": "esy test:js",
     "format": "esy format",
     "check-format": "esy check-format",
+    "parser:interpret": "esy b menhir src/parsing/parser.mly --unused-tokens --interpret",
+    "parser:interpret-error": "esy b menhir src/parsing/parser.mly --unused-tokens --interpret-error",
+    "parser:list-errors": "esy b menhir src/parsing/parser.mly --unused-tokens --list-errors > src/parsing/parser.messages.generated",
+    "parser:update-errors": "esy b menhir src/parsing/parser.mly --unused-tokens --update-errors src/parsing/parser.messages > src/parsing/parser.messages.generated && cp src/parsing/parser.messages.generated src/parsing/parser.messages",
+    "parser:check-errors": "npm run parser:list-errors && esy b menhir src/parsing/parser.mly --unused-tokens --compare-errors src/parsing/parser.messages.generated --compare-errors src/parsing/parser.messages",
+    "graindoc-parser:interpret": "esy b menhir src/diagnostics/graindoc_parser.mly --unused-tokens --interpret",
+    "graindoc-parser:interpret-error": "esy b menhir src/diagnostics/graindoc_parser.mly --unused-tokens --interpret-error",
+    "graindoc-parser:list-errors": "esy b menhir src/diagnostics/graindoc_parser.mly --unused-tokens --list-errors > src/diagnostics/graindoc_parser.messages.generated",
+    "graindoc-parser:update-errors": "esy b menhir src/diagnostics/graindoc_parser.mly --unused-tokens --update-errors src/diagnostics/graindoc_parser.messages > src/diagnostics/graindoc_parser.messages.generated && cp src/diagnostics/graindoc_parser.messages.generated src/diagnostics/graindoc_parser.messages",
+    "graindoc-parser:check-errors": "npm run graindoc-parser:list-errors && esy b menhir src/diagnostics/graindoc_parser.mly --unused-tokens --compare-errors src/diagnostics/graindoc_parser.messages.generated --compare-errors src/diagnostics/graindoc_parser.messages",
     "import-dependencies": "esy import-dependencies _export",
+    "postimport-dependencies": "shx rm -rf _export",
     "export-dependencies": "esy export-dependencies",
     "build-dependencies": "esy build-dependencies"
   }

@@ -11,7 +11,7 @@ open Typepat;
 open Disambiguation;
 
 type error =
-  | Arity_mismatch(type_expr, int)
+  | Arity_mismatch(type_expr, option(type_forcing_context))
   | Polymorphic_label(Identifier.t)
   | Constructor_arity_mismatch(Identifier.t, int, int)
   | Label_mismatch(Identifier.t, list((type_expr, type_expr)))
@@ -24,6 +24,9 @@ type error =
       option(type_forcing_context),
     )
   | Apply_non_function(type_expr)
+  | Apply_too_many_arguments(type_expr, list((argument_label, type_expr)))
+  | Apply_too_few_arguments(list((argument_label, type_expr)))
+  | Apply_unknown_label(string, list(string))
   | Label_multiply_defined(string)
   | Label_missing(list(Ident.t))
   | Label_not_mutable(Identifier.t)
@@ -55,7 +58,13 @@ type error =
       list((type_expr, type_expr)),
       bool,
     )
-  | Too_many_arguments(bool, type_expr, option(type_forcing_context))
+  | Not_a_function(type_expr, option(type_forcing_context))
+  | Function_label_mismatch({
+      got: argument_label,
+      expected: argument_label,
+      expected_type: type_expr,
+      explanation: option(type_forcing_context),
+    })
   | Scoping_let_module(string, type_expr)
   | Masked_instance_variable(Identifier.t)
   | Not_a_variant_type(Identifier.t)
@@ -72,7 +81,7 @@ type error =
   | No_value_clauses
   | Exception_pattern_below_toplevel
   | Inlined_record_escape
-  | Inlined_record_expected
+  | Inlined_record_misuse(Identifier.t, string, string)
   | Invalid_extension_constructor_payload
   | Not_an_extension_constructor
   | Literal_overflow(string)
@@ -98,143 +107,345 @@ let grain_type_of_wasm_prim_type =
   | Wasm_float64 => Builtin_types.type_wasmf64
   | Grain_bool => Builtin_types.type_bool;
 
+let prim_type = (args, ret) =>
+  newgenty(
+    TTyArrow(
+      List.map(
+        ((name, ty)) => (Labeled(Location.mknoloc(name)), ty),
+        args,
+      ),
+      ret,
+      TComOk,
+    ),
+  );
+
+let prim0_type =
+  fun
+  | AllocateInt32
+  | AllocateInt64
+  | AllocateUint32
+  | AllocateUint64
+  | AllocateFloat32
+  | AllocateFloat64
+  | AllocateRational
+  | WasmMemorySize
+  | HeapStart
+  | HeapTypeMetadata => prim_type([], Builtin_types.type_wasmi32)
+  | Unreachable => prim_type([], newgenvar(~name="a", ()));
+
 let prim1_type =
   fun
-  | Not => (Builtin_types.type_bool, Builtin_types.type_bool)
+  | AllocateArray
+  | AllocateTuple
+  | AllocateBytes
+  | AllocateString
+  | AllocateBigInt =>
+    prim_type(
+      [("size", Builtin_types.type_wasmi32)],
+      Builtin_types.type_wasmi32,
+    )
+  | StringSize
+  | BytesSize
+  | LoadAdtVariant =>
+    prim_type(
+      [("ptr", Builtin_types.type_wasmi32)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewInt32 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewInt64 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi64)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewUint32 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewUint64 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi64)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewFloat32 =>
+    prim_type(
+      [("float", Builtin_types.type_wasmf32)],
+      Builtin_types.type_wasmi32,
+    )
+  | NewFloat64 =>
+    prim_type(
+      [("float", Builtin_types.type_wasmf64)],
+      Builtin_types.type_wasmi32,
+    )
+  | BuiltinId =>
+    prim_type(
+      [("str", Builtin_types.type_string)],
+      Builtin_types.type_number,
+    )
+  | TagSimpleNumber =>
+    prim_type(
+      [("num", Builtin_types.type_wasmi32)],
+      Builtin_types.type_number,
+    )
+  | UntagSimpleNumber =>
+    prim_type(
+      [("num", Builtin_types.type_number)],
+      Builtin_types.type_wasmi32,
+    )
+  | TagChar =>
+    prim_type(
+      [("char", Builtin_types.type_wasmi32)],
+      Builtin_types.type_char,
+    )
+  | UntagChar =>
+    prim_type(
+      [("char", Builtin_types.type_char)],
+      Builtin_types.type_wasmi32,
+    )
+  | TagInt8 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_int8,
+    )
+  | UntagInt8 =>
+    prim_type(
+      [("int", Builtin_types.type_int8)],
+      Builtin_types.type_wasmi32,
+    )
+  | TagInt16 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_int16,
+    )
+  | UntagInt16 =>
+    prim_type(
+      [("int", Builtin_types.type_int16)],
+      Builtin_types.type_wasmi32,
+    )
+  | TagUint8 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_uint8,
+    )
+  | UntagUint8 =>
+    prim_type(
+      [("int", Builtin_types.type_uint8)],
+      Builtin_types.type_wasmi32,
+    )
+  | TagUint16 =>
+    prim_type(
+      [("int", Builtin_types.type_wasmi32)],
+      Builtin_types.type_uint16,
+    )
+  | UntagUint16 =>
+    prim_type(
+      [("int", Builtin_types.type_uint16)],
+      Builtin_types.type_wasmi32,
+    )
+  | Not =>
+    prim_type([("bool", Builtin_types.type_bool)], Builtin_types.type_bool)
   | Box
   | BoxBind => {
-      let var = newvar(~name="a", ());
-      (var, Builtin_types.type_box(var));
+      let var = newgenvar(~name="a", ());
+      prim_type([("value", var)], Builtin_types.type_box(var));
     }
   | Unbox
   | UnboxBind => {
-      let var = newvar(~name="a", ());
-      (Builtin_types.type_box(var), var);
+      let var = newgenvar(~name="a", ());
+      prim_type([("value", Builtin_types.type_box(var))], var);
     }
   | Ignore => {
-      let var = newvar(~name="a", ());
-      (var, Builtin_types.type_void);
+      let var = newgenvar(~name="a", ());
+      prim_type([("value", var)], Builtin_types.type_void);
     }
   | ArrayLength => {
-      let var = newvar(~name="a", ());
-      (Builtin_types.type_array(var), Builtin_types.type_number);
+      let var = newgenvar(~name="a", ());
+      prim_type(
+        [("array", Builtin_types.type_array(var))],
+        Builtin_types.type_number,
+      );
     }
-  | Assert => (Builtin_types.type_bool, Builtin_types.type_void)
-  | Throw => (Builtin_types.type_exception, newvar(~name="a", ()))
-  | WasmFromGrain => (newvar(~name="a", ()), Builtin_types.type_wasmi32)
-  | WasmToGrain => (Builtin_types.type_wasmi32, newvar(~name="a", ()))
+  | Assert =>
+    prim_type(
+      [("condition", Builtin_types.type_bool)],
+      Builtin_types.type_void,
+    )
+  | Throw =>
+    prim_type(
+      [("exn", Builtin_types.type_exception)],
+      newgenvar(~name="a", ()),
+    )
+  | Magic =>
+    prim_type(
+      [("value", newgenvar(~name="a", ()))],
+      newgenvar(~name="b", ()),
+    )
+  | WasmFromGrain =>
+    prim_type(
+      [("value", newgenvar(~name="a", ()))],
+      Builtin_types.type_wasmi32,
+    )
+  | WasmToGrain =>
+    prim_type(
+      [("value", Builtin_types.type_wasmi32)],
+      newgenvar(~name="a", ()),
+    )
   | WasmUnaryI32({arg_type, ret_type})
   | WasmUnaryI64({arg_type, ret_type})
   | WasmUnaryF32({arg_type, ret_type})
-  | WasmUnaryF64({arg_type, ret_type}) => (
-      grain_type_of_wasm_prim_type(arg_type),
+  | WasmUnaryF64({arg_type, ret_type}) =>
+    prim_type(
+      [("num", grain_type_of_wasm_prim_type(arg_type))],
       grain_type_of_wasm_prim_type(ret_type),
     )
-  | WasmMemoryGrow => (
-      Builtin_types.type_wasmi32,
+  | WasmMemoryGrow =>
+    prim_type(
+      [("size", Builtin_types.type_wasmi32)],
       Builtin_types.type_wasmi32,
     );
 
 let prim2_type =
   fun
+  | NewRational =>
+    prim_type(
+      [
+        ("numerator", Builtin_types.type_wasmi32),
+        ("denominator", Builtin_types.type_wasmi32),
+      ],
+      Builtin_types.type_wasmi32,
+    )
   | And
-  | Or => (
-      Builtin_types.type_bool,
-      Builtin_types.type_bool,
+  | Or =>
+    prim_type(
+      [
+        ("left", Builtin_types.type_bool),
+        ("right", Builtin_types.type_bool),
+      ],
       Builtin_types.type_bool,
     )
   | Is
   | Eq => {
-      let v1 = newvar(~name="equal", ())
-      and v2 = newvar(~name="equal", ());
-      (v1, v2, Builtin_types.type_bool);
+      let v = newgenvar(~name="a", ());
+      prim_type([("left", v), ("right", v)], Builtin_types.type_bool);
     }
   | WasmBinaryI32({arg_types: (arg1_type, arg2_type), ret_type})
   | WasmBinaryI64({arg_types: (arg1_type, arg2_type), ret_type})
   | WasmBinaryF32({arg_types: (arg1_type, arg2_type), ret_type})
-  | WasmBinaryF64({arg_types: (arg1_type, arg2_type), ret_type}) => (
-      grain_type_of_wasm_prim_type(arg1_type),
-      grain_type_of_wasm_prim_type(arg2_type),
+  | WasmBinaryF64({arg_types: (arg1_type, arg2_type), ret_type}) =>
+    prim_type(
+      [
+        ("left", grain_type_of_wasm_prim_type(arg1_type)),
+        ("right", grain_type_of_wasm_prim_type(arg2_type)),
+      ],
       grain_type_of_wasm_prim_type(ret_type),
     )
-  | WasmLoadI32(_) => (
-      Builtin_types.type_wasmi32,
-      Builtin_types.type_wasmi32,
+  | WasmLoadI32(_) =>
+    prim_type(
+      [
+        ("ptr", Builtin_types.type_wasmi32),
+        ("offset", Builtin_types.type_wasmi32),
+      ],
       Builtin_types.type_wasmi32,
     )
-  | WasmLoadI64(_) => (
-      Builtin_types.type_wasmi32,
-      Builtin_types.type_wasmi32,
+  | WasmLoadI64(_) =>
+    prim_type(
+      [
+        ("ptr", Builtin_types.type_wasmi32),
+        ("offset", Builtin_types.type_wasmi32),
+      ],
       Builtin_types.type_wasmi64,
     )
-  | WasmLoadF32 => (
-      Builtin_types.type_wasmi32,
-      Builtin_types.type_wasmi32,
+  | WasmLoadF32 =>
+    prim_type(
+      [
+        ("ptr", Builtin_types.type_wasmi32),
+        ("offset", Builtin_types.type_wasmi32),
+      ],
       Builtin_types.type_wasmf32,
     )
-  | WasmLoadF64 => (
-      Builtin_types.type_wasmi32,
-      Builtin_types.type_wasmi32,
+  | WasmLoadF64 =>
+    prim_type(
+      [
+        ("ptr", Builtin_types.type_wasmi32),
+        ("offset", Builtin_types.type_wasmi32),
+      ],
       Builtin_types.type_wasmf64,
     );
 
 let primn_type =
   fun
-  | WasmStoreI32(_) => (
+  | WasmStoreI32(_) =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
+        ("ptr", Builtin_types.type_wasmi32),
+        ("value", Builtin_types.type_wasmi32),
+        ("offset", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_void,
     )
-  | WasmStoreI64(_) => (
+  | WasmStoreI64(_) =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi64,
-        Builtin_types.type_wasmi32,
+        ("ptr", Builtin_types.type_wasmi32),
+        ("value", Builtin_types.type_wasmi64),
+        ("offset", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_void,
     )
-  | WasmStoreF32 => (
+  | WasmStoreF32 =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmf32,
-        Builtin_types.type_wasmi32,
+        ("ptr", Builtin_types.type_wasmi32),
+        ("value", Builtin_types.type_wasmf32),
+        ("offset", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_void,
     )
-  | WasmStoreF64 => (
+  | WasmStoreF64 =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmf64,
-        Builtin_types.type_wasmi32,
+        ("ptr", Builtin_types.type_wasmi32),
+        ("value", Builtin_types.type_wasmf64),
+        ("offset", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_void,
     )
-  | WasmMemorySize => ([], Builtin_types.type_wasmi32)
-  | WasmMemoryCopy
-  | WasmMemoryFill => (
+  | WasmMemoryCopy =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
+        ("source", Builtin_types.type_wasmi32),
+        ("destination", Builtin_types.type_wasmi32),
+        ("length", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_void,
     )
-  | WasmMemoryCompare => (
+  | WasmMemoryFill =>
+    prim_type(
       [
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
-        Builtin_types.type_wasmi32,
+        ("ptr", Builtin_types.type_wasmi32),
+        ("value", Builtin_types.type_wasmi32),
+        ("length", Builtin_types.type_wasmi32),
+      ],
+      Builtin_types.type_void,
+    )
+  | WasmMemoryCompare =>
+    prim_type(
+      [
+        ("ptr1", Builtin_types.type_wasmi32),
+        ("ptr2", Builtin_types.type_wasmi32),
+        ("length", Builtin_types.type_wasmi32),
       ],
       Builtin_types.type_wasmi32,
     );
 
 let maybe_add_pattern_variables_ghost = (loc_let, env, pv) =>
   List.fold_right(
-    ((id, ty, _name, _loc, _as_var), env) => {
-      let lid = Identifier.IdentName(Ident.name(id));
+    ((id, ty, _name, loc, _as_var), env) => {
+      let lid = Identifier.IdentName(mkloc(Ident.name(id), loc));
       switch (Env.lookup_value(~mark=false, lid, env)) {
       | _ => env
       | exception Not_found =>
@@ -243,10 +454,12 @@ let maybe_add_pattern_variables_ghost = (loc_let, env, pv) =>
           {
             val_type: ty,
             val_repr: Type_utils.repr_of_type(env, ty),
+            val_internalpath: Path.PIdent(id),
             val_fullpath: Path.PIdent(id),
             val_kind: TValUnbound(ValUnboundGhostRecursive),
             val_loc: loc_let,
             val_mutable: false,
+            val_global: false,
           },
           env,
         )
@@ -255,26 +468,6 @@ let maybe_add_pattern_variables_ghost = (loc_let, env, pv) =>
     pv,
     env,
   );
-
-let all_idents_cases = el => {
-  open Ast_iterator;
-  let idents = Hashtbl.create(8);
-  let rec f_expr = iter =>
-    fun
-    | {pexp_desc: PExpId({txt: Identifier.IdentName(id), _}), _} =>
-      Hashtbl.replace(idents, id, ())
-    | e => default_iterator.expr(iter, e);
-
-  let iterator = {...default_iterator, expr: f_expr};
-  List.iter(
-    cp => {
-      Option.iter(iterator.expr(iterator), cp.pmb_guard);
-      iterator.expr(iterator, cp.pmb_body);
-    },
-    el,
-  );
-  Hashtbl.fold((x, (), rest) => [x, ...rest], idents, []);
-};
 
 let constant:
   (Location.t, Parsetree.constant) =>
@@ -286,11 +479,6 @@ let constant:
 
 let constant_or_raise = Checkertypes.constant_or_raise;
 
-/* Specific version of type_option, using newty rather than newgenty */
-
-/*let type_option ty =
-  newty (TTyConstr(Predef.path_option,[ty], ref TMemNil))*/
-
 let mkexp = (exp_desc, exp_type, exp_loc, exp_env, exp_attributes) => {
   exp_desc,
   exp_type,
@@ -298,6 +486,50 @@ let mkexp = (exp_desc, exp_type, exp_loc, exp_env, exp_attributes) => {
   exp_env,
   exp_extra: [],
   exp_attributes,
+};
+
+/* Specific version of type_option, using newty rather than newgenty */
+
+let type_option = ty =>
+  newty(TTyConstr(Builtin_types.path_option, [ty], ref(TMemNil)));
+
+let option_some = (env, texp) => {
+  let csome =
+    Env.find_constructor(Path.PIdent(Builtin_types.ident_some_cstr), env);
+  mkexp(
+    TExpConstruct(
+      mknoloc(Identifier.IdentName(mknoloc("Some"))),
+      csome,
+      TExpConstrTuple([texp]),
+    ),
+    type_option(texp.exp_type),
+    texp.exp_loc,
+    texp.exp_env,
+    [],
+  );
+};
+
+let option_none = (env, ty, loc) => {
+  let cnone =
+    Env.find_constructor(Path.PIdent(Builtin_types.ident_none_cstr), env);
+  mkexp(
+    TExpConstruct(
+      mknoloc(Identifier.IdentName(mknoloc("None"))),
+      cnone,
+      TExpConstrTuple([]),
+    ),
+    type_option(ty),
+    loc,
+    env,
+    [],
+  );
+};
+
+let extract_option_type = (env, ty) => {
+  switch (expand_head(env, ty).desc) {
+  | TTyConstr(path, [ty], _) when Path.same(path, Builtin_types.path_option) => ty
+  | _ => failwith("Impossible: option type was not an option")
+  };
 };
 
 /* Typing of patterns */
@@ -335,7 +567,7 @@ let rec final_subexpression = sexp =>
   switch (sexp.pexp_desc) {
   | PExpIf(_, e, _)
   | PExpWhile(_, e)
-  | PExpMatch(_, [{pmb_body: e}, ..._]) => final_subexpression(e)
+  | PExpMatch(_, {txt: [{pmb_body: e}, ..._]}) => final_subexpression(e)
   | PExpBlock(es) =>
     try(final_subexpression(last(es))) {
     | Not_found => sexp
@@ -347,8 +579,7 @@ let rec is_nonexpansive = exp =>
   switch (exp.exp_desc) {
   | TExpIdent(_)
   | TExpConstant(_)
-  | TExpLambda(_)
-  | TExpNull => true
+  | TExpLambda(_) => true
   | TExpTuple(es) => List.for_all(is_nonexpansive, es)
   | TExpLet(rec_flag, Immutable, binds) =>
     List.for_all(vb => is_nonexpansive(vb.vb_expr), binds)
@@ -360,7 +591,8 @@ let rec is_nonexpansive = exp =>
   | TExpIf(c, t, f) => is_nonexpansive(t) && is_nonexpansive(f)
   | TExpWhile(c, b) => is_nonexpansive(b)
   | TExpBlock([_, ..._] as es) => is_nonexpansive(last(es))
-  | TExpConstruct(_, _, el) => List.for_all(is_nonexpansive, el)
+  | TExpConstruct(_, _, TExpConstrTuple(el)) =>
+    List.for_all(is_nonexpansive, el)
   | _ => false
   };
 
@@ -373,7 +605,7 @@ let rec approx_type = (env, sty) =>
   | PTyArrow(args, ret) =>
     newty(
       TTyArrow(
-        List.map(x => newvar(), args),
+        List.map(x => (x.ptyp_arg_label, newvar()), args),
         approx_type(env, ret),
         TComOk,
       ),
@@ -397,12 +629,16 @@ let rec approx_type = (env, sty) =>
 let rec type_approx = (env, sexp: Parsetree.expression) =>
   switch (sexp.pexp_desc) {
   | PExpLet(_, _, _) => Builtin_types.type_void
-  | PExpMatch(_, [{pmb_body: e}, ..._]) => type_approx(env, e)
+  | PExpMatch(_, {txt: [{pmb_body: e}, ..._]}) => type_approx(env, e)
   | PExpIf(_, e, _) => type_approx(env, e)
   | PExpWhile(_, e) => type_approx(env, e)
   | PExpLambda(args, e) =>
     newty(
-      TTyArrow(List.map(x => newvar(), args), type_approx(env, e), TComOk),
+      TTyArrow(
+        List.map(x => (x.pla_label, newvar()), args),
+        type_approx(env, e),
+        TComOk,
+      ),
     )
   | PExpBlock([_, ..._] as es) => type_approx(env, last(es))
   | _ => newvar()
@@ -473,18 +709,6 @@ let generalizable = (level, ty) => {
   };
 };
 
-/* Duplicate types of values in the environment */
-/* XXX Should we do something about global type variables too? */
-
-let duplicate_ident_types = (caselist, env) => {
-  let caselist =
-    List.filter(
-      ({pmb_pat}) => /*contains_gadt env pc_lhs*/ false,
-      caselist,
-    );
-  Env.copy_types(all_idents_cases(caselist), env);
-};
-
 /* Getting proper location of already typed expressions.
       Used to avoid confusing locations on type error messages in presence of
       type constraints.
@@ -527,9 +751,9 @@ let unify_exp = (env, exp, expected_ty) => {
   unify_exp_types(loc, env, exp.exp_type, expected_ty);
 };
 
-let rec type_exp = (~recarg=?, env, sexp) =>
+let rec type_exp = (~in_function=?, ~recarg=?, env, sexp) =>
   /* We now delegate everything to type_expect */
-  type_expect(~recarg?, env, sexp, mk_expected(newvar()))
+  type_expect(~in_function?, ~recarg?, env, sexp, mk_expected(newvar()))
 
 /* Typing of an expression with an expected type.
      This provide better error messages, and allows controlled
@@ -563,8 +787,11 @@ and type_expect_ =
     (~in_function=?, ~recarg=Rejected, env, sexp, ty_expected_explained) => {
   let {ty: ty_expected, explanation} = ty_expected_explained;
   let loc = sexp.pexp_loc;
+  let core_loc = sexp.pexp_core_loc;
   let attributes = Typetexp.type_attributes(sexp.pexp_attributes);
   /* Record the expression type before unifying it with the expected type */
+  let type_expect = type_expect(~in_function?);
+  let type_exp = type_exp(~in_function?);
   let with_explanation = with_explanation(explanation);
   let rue = exp => {
     with_explanation(() =>
@@ -620,6 +847,58 @@ and type_expect_ =
       exp_type: newty(TTyTuple(List.map(e => e.exp_type, expl))),
       exp_env: env,
     });
+  | PExpList(es) =>
+    let convert_list = (~loc, ~core_loc, ~attributes=?, a) => {
+      open Ast_helper;
+      let empty =
+        Expression.tuple_construct(~loc, ~core_loc, ident_empty, []);
+      let list =
+        switch (List.rev(a)) {
+        | [] => empty
+        | [base, ...rest] =>
+          let base =
+            switch (base) {
+            | ListItem(expr) =>
+              Expression.tuple_construct(
+                ~loc,
+                ~core_loc,
+                ~attributes?,
+                ident_cons,
+                [expr, empty],
+              )
+            | ListSpread(expr, _) => expr
+            };
+          List.fold_left(
+            (acc, expr) => {
+              switch (expr) {
+              | ListItem(expr) =>
+                Expression.tuple_construct(
+                  ~loc,
+                  ~core_loc,
+                  ~attributes?,
+                  ident_cons,
+                  [expr, acc],
+                )
+              | ListSpread(_, loc) =>
+                raise(
+                  SyntaxError(
+                    loc,
+                    "A list spread can only appear at the end of a list.",
+                  ),
+                )
+              }
+            },
+            base,
+            rest,
+          );
+        };
+      {...list, pexp_loc: loc};
+    };
+    type_expect(
+      env,
+      convert_list(~loc, ~core_loc, ~attributes=sexp.pexp_attributes, es),
+      ty_expected_explained,
+    );
   | PExpArray(es) =>
     let ty = newgenvar();
     let to_unify = Builtin_types.type_array(ty);
@@ -662,7 +941,7 @@ and type_expect_ =
       exp_type: instance(env, array_type),
       exp_env: env,
     });
-  | PExpArraySet(sarrexp, sidx, se) =>
+  | PExpArraySet({array: sarrexp, index: sidx, value: se, infix_op: None}) =>
     let array_type = newvar(~name="a", ());
     let arrexp =
       type_expect(
@@ -684,14 +963,97 @@ and type_expect_ =
       );
     let e = type_expect(env, se, mk_expected(array_type));
     rue({
-      exp_desc: TExpArraySet(arrexp, idx, e),
+      exp_desc:
+        TExpArraySet({array: arrexp, index: idx, value: e, infix_op: None}),
       exp_loc: loc,
       exp_extra: [],
       exp_attributes: attributes,
       exp_type: Builtin_types.type_void,
       exp_env: env,
     });
-  | PExpRecord(es) =>
+  | PExpArraySet({
+      lhs_loc,
+      array: sarrexp,
+      index: sidx,
+      value: se,
+      infix_op: Some(infix),
+    }) =>
+    let array_type = newvar(~name="a", ());
+    let arrexp =
+      type_expect(
+        env,
+        sarrexp,
+        mk_expected(
+          ~explanation=Assign_not_array,
+          Builtin_types.type_array(array_type),
+        ),
+      );
+    let idx =
+      type_expect(
+        env,
+        sidx,
+        mk_expected(
+          ~explanation=Assign_not_array_index,
+          Builtin_types.type_number,
+        ),
+      );
+    let infix = type_exp(env, infix);
+    let ty_fun = expand_head(env, infix.exp_type);
+    let (ty_args, ty_ret) =
+      switch (ty_fun.desc) {
+      | TTyVar(_) =>
+        let t_args = [(Unlabeled, newvar()), (Unlabeled, newvar())]
+        and t_ret = newvar();
+        unify(
+          env,
+          ty_fun,
+          newty(TTyArrow(t_args, t_ret, TComLink(ref(TComUnknown)))),
+        );
+        (t_args, t_ret);
+      | TTyArrow(t_args, t_ret, _) => (t_args, t_ret)
+      | _ =>
+        raise(
+          Error(
+            infix.exp_loc,
+            env,
+            Apply_non_function(expand_head(env, infix.exp_type)),
+          ),
+        )
+      };
+    let (ty_arg1, ty_arg2) =
+      switch (ty_args) {
+      | [(_, arg1), (_, arg2)] => (arg1, arg2)
+      | _ =>
+        raise(
+          Error(
+            infix.exp_loc,
+            env,
+            Arity_mismatch(expand_head(env, infix.exp_type), None),
+          ),
+        )
+      };
+
+    unify_exp_types(lhs_loc, env, array_type, ty_arg1);
+    let e = type_expect(env, se, mk_expected(ty_arg2));
+    let assignment_loc = {...infix.exp_loc, loc_end: se.pexp_loc.loc_end};
+    unify_exp_types(assignment_loc, env, ty_ret, array_type);
+    rue({
+      exp_desc:
+        TExpArraySet({
+          array: arrexp,
+          index: idx,
+          value: e,
+          infix_op: Some(infix),
+        }),
+      exp_loc: loc,
+      exp_extra: [],
+      exp_attributes: attributes,
+      exp_type: Builtin_types.type_void,
+      exp_env: env,
+    });
+  | PExpRecord(b, es) =>
+    let opt_exp = Option.map(type_exp(env), b);
+
     let (ty_record, opath) = {
       let get_path = ty =>
         try({
@@ -703,9 +1065,19 @@ and type_expect_ =
         | Not_found => None
         };
 
-      switch (get_path(ty_expected)) {
-      | None => (newvar(), None)
-      | op => (ty_expected, op)
+      let expected_opath = get_path(ty_expected);
+      let opt_exp_opath = Option.bind(opt_exp, exp => get_path(exp.exp_type));
+      switch (expected_opath, opt_exp_opath) {
+      | (None, None) => (newvar(), None)
+      | (Some(_), None)
+      | (Some((_, _, true)), Some(_)) => (ty_expected, expected_opath)
+      | (None | Some((_, _, false)), Some((_, p', _))) =>
+        let decl = Env.find_type(p', env);
+        begin_def();
+        let ty = newconstr(p', instance_list(env, decl.type_params));
+        end_def();
+        generalize_structure(ty);
+        (ty, opt_exp_opath);
       };
     };
 
@@ -747,7 +1119,7 @@ and type_expect_ =
     );
 
     check_duplicates(lbl_exp_list);
-    let label_definitions = {
+    let (opt_exp, label_definitions) = {
       let (_lid, lbl, _lbl_exp) = List.hd(lbl_exp_list);
       let matching_label = lbl =>
         List.find(
@@ -755,33 +1127,65 @@ and type_expect_ =
           lbl_exp_list,
         );
 
-      Array.map(
-        lbl =>
+      switch (opt_exp) {
+      | None =>
+        let label_definitions =
+          Array.map(
+            lbl =>
+              switch (matching_label(lbl)) {
+              | (lid, _lbl, lbl_exp) => Overridden(lid, lbl_exp)
+              | exception Not_found =>
+                let present_indices =
+                  List.map(((_, lbl, _)) => lbl.lbl_pos, lbl_exp_list);
+
+                let label_names = extract_label_names(env, ty_expected);
+                let rec missing_labels = n => (
+                  fun
+                  | [] => []
+                  | [lbl, ...rem] =>
+                    if (List.mem(n, present_indices)) {
+                      missing_labels(n + 1, rem);
+                    } else {
+                      [lbl, ...missing_labels(n + 1, rem)];
+                    }
+                );
+
+                let missing = missing_labels(0, label_names);
+                raise(Error(loc, env, Label_missing(missing)));
+              },
+            lbl.lbl_all,
+          );
+        (None, label_definitions);
+      | Some(exp) =>
+        let ty_exp = instance(env, exp.exp_type);
+        let unify_kept = lbl => {
+          let (_, ty_arg1, ty_res1) = instance_label(false, lbl);
+          unify_exp_types(exp.exp_loc, env, ty_exp, ty_res1);
           switch (matching_label(lbl)) {
-          | (lid, _lbl, lbl_exp) => Overridden(lid, lbl_exp)
+          | (lid, _lbl, lbl_exp) =>
+            // do not connect result types for overridden labels
+            Overridden(lid, lbl_exp)
           | exception Not_found =>
-            let present_indices =
-              List.map(((_, lbl, _)) => lbl.lbl_pos, lbl_exp_list);
-
-            let label_names = extract_label_names(env, ty_expected);
-            let rec missing_labels = n => (
-              fun
-              | [] => []
-              | [lbl, ...rem] =>
-                if (List.mem(n, present_indices)) {
-                  missing_labels(n + 1, rem);
-                } else {
-                  [lbl, ...missing_labels(n + 1, rem)];
-                }
+            let (_, ty_arg2, ty_res2) = instance_label(false, lbl);
+            unify_exp_types(loc, env, ty_arg1, ty_arg2);
+            with_explanation(() =>
+              unify_exp_types(loc, env, instance(env, ty_expected), ty_res2)
             );
-
-            let missing = missing_labels(0, label_names);
-            raise(Error(loc, env, Label_missing(missing)));
-          },
-        lbl.lbl_all,
-      );
+            Kept;
+          };
+        };
+        let label_definitions = Array.map(unify_kept, lbl.lbl_all);
+        (Some({...exp, exp_type: ty_exp}), label_definitions);
+      };
     };
-
+    let num_fields =
+      switch (lbl_exp_list) {
+      | [] => assert(false)
+      | [(_, lbl, _), ..._] => Array.length(lbl.lbl_all)
+      };
+    if (b != None && List.length(es) == num_fields) {
+      Location.prerr_warning(loc, Grain_utils.Warnings.UselessRecordSpread);
+    };
     let label_descriptions = {
       let (_, {lbl_all}, _) = List.hd(lbl_exp_list);
       lbl_all;
@@ -795,7 +1199,7 @@ and type_expect_ =
       );
 
     re({
-      exp_desc: TExpRecord(fields),
+      exp_desc: TExpRecord(opt_exp, fields),
       exp_loc: loc,
       exp_extra: [],
       exp_attributes: attributes,
@@ -834,7 +1238,16 @@ and type_expect_ =
   | PExpLet(rec_flag, mut_flag, pats) =>
     let scp = None;
     let (pat_exp_list, new_env, unpacks) =
-      type_let(env, rec_flag, mut_flag, pats, scp, true);
+      type_let(
+        ~in_function?,
+        env,
+        rec_flag,
+        mut_flag,
+        false,
+        pats,
+        scp,
+        true,
+      );
     /*let () =
       if rec_flag = Recursive then
         check_recursive_bindings env pat_exp_list
@@ -849,11 +1262,111 @@ and type_expect_ =
     });
   | PExpLambda(args, body) =>
     open Ast_helper;
+    let gen_opt = label => {
+      let label =
+        switch (label) {
+        | Unlabeled => failwith("Impossible: default argument with no label")
+        | Labeled({txt: name})
+        | Default({txt: name}) => name
+        };
+      "$default_option_" ++ label;
+    };
+    let (args, labels, prelude) =
+      List.fold_right(
+        (arg, (args, labels, prelude)) => {
+          switch (arg.pla_default) {
+          | Some(default) =>
+            let default_value_name = mknoloc("$default_value");
+            let default_loc = default.pexp_loc;
+            let default_core_loc = default.pexp_core_loc;
+            let scases = [
+              MatchBranch.mk(
+                ~loc=default_loc,
+                Pattern.construct(
+                  ~loc=default_loc,
+                  mknoloc(Identifier.IdentName(mknoloc("Some"))),
+                  PPatConstrTuple([
+                    Pattern.var(~loc=default_loc, default_value_name),
+                  ]),
+                ),
+                Expression.ident(
+                  ~loc=default_loc,
+                  ~core_loc=default_core_loc,
+                  mknoloc(Identifier.IdentName(default_value_name)),
+                ),
+                None,
+              ),
+              MatchBranch.mk(
+                ~loc=default_loc,
+                Pattern.construct(
+                  ~loc=default_loc,
+                  mknoloc(Identifier.IdentName(mknoloc("None"))),
+                  PPatConstrTuple([]),
+                ),
+                default,
+                None,
+              ),
+            ];
+            let sloc = {
+              Location.loc_start: arg.pla_pattern.ppat_loc.Location.loc_start,
+              loc_end: default_loc.Location.loc_end,
+              loc_ghost: true,
+            };
+            let opt_name = mknoloc(gen_opt(arg.pla_label));
+            let smatch =
+              Expression.match(
+                ~loc=sloc,
+                ~core_loc=sloc,
+                Expression.ident(
+                  ~loc=sloc,
+                  ~core_loc=sloc,
+                  mknoloc(Identifier.IdentName(opt_name)),
+                ),
+                mknoloc(scases),
+              );
+            let pat = Pattern.var(~loc=sloc, opt_name);
+            let prelude_expr =
+              Expression.let_(
+                ~loc=sloc,
+                ~core_loc=sloc,
+                Nonrecursive,
+                Immutable,
+                [ValueBinding.mk(~loc=arg.pla_loc, arg.pla_pattern, smatch)],
+              );
+            (
+              [pat, ...args],
+              [arg.pla_label, ...labels],
+              [prelude_expr, ...prelude],
+            );
+          | None => (
+              [arg.pla_pattern, ...args],
+              [arg.pla_label, ...labels],
+              prelude,
+            )
+          }
+        },
+        args,
+        ([], [], []),
+      );
     let pat =
       switch (args) {
       | [] =>
-        Pat.construct(Location.mknoloc(Identifier.IdentName("()")), [])
-      | args => Pat.tuple(args)
+        Pattern.tuple_construct(
+          ~loc=Location.dummy_loc,
+          Location.mknoloc(Identifier.IdentName(Location.mknoloc("()"))),
+          [],
+        )
+      | args => Pattern.tuple(~loc=Location.dummy_loc, args)
+      };
+    let body =
+      switch (prelude) {
+      | [] => body
+      | _ =>
+        Expression.block(
+          ~loc=body.pexp_loc,
+          ~core_loc=body.pexp_core_loc,
+          prelude @ [body],
+        )
       };
     type_function(
       ~in_function?,
@@ -861,20 +1374,13 @@ and type_expect_ =
       attributes,
       env,
       ty_expected_explained,
-      (),
-      [Mb.mk(pat, body, None)],
+      labels,
+      [MatchBranch.mk(~loc, pat, body, None)],
     );
   | PExpApp(func, args) =>
     begin_def(); /* one more level for non-returning functions */
-    if (Grain_utils.Config.principal^) {
-      begin_def();
-    };
     let funct = type_exp(env, func);
-    if (Grain_utils.Config.principal^) {
-      end_def();
-      generalize_structure(funct.exp_type);
-    };
-    /* TODO: What does this do? */
+    // TODO: Determine what this does
     /*let rec lower_args seen ty_fun =
         let ty = expand_head env ty_fun in
         if List.memq ty seen then () else
@@ -887,17 +1393,27 @@ and type_expect_ =
     end_def();
     /*lower_args [] ty;*/
     begin_def();
-    let (args, ty_res) = type_application(env, funct, args);
+    let (label_order, args, ty_res) =
+      type_application(~in_function?, ~loc, env, funct, args);
     end_def();
     unify_var(env, newvar(), funct.exp_type);
     rue({
-      exp_desc: TExpApp(funct, args),
+      exp_desc: TExpApp(funct, label_order, args),
       exp_loc: loc,
       exp_extra: [],
       exp_attributes: attributes,
       exp_type: ty_res,
       exp_env: env,
     });
+  | PExpConstruct(cstr, arg) =>
+    type_construct(
+      env,
+      loc,
+      cstr,
+      arg,
+      ty_expected_explained,
+      sexp.pexp_attributes,
+    )
   | PExpMatch(arg, branches) =>
     begin_def();
     let arg = type_exp(env, arg);
@@ -907,7 +1423,15 @@ and type_expect_ =
     };
     generalize(arg.exp_type);
     let (val_cases, partial) =
-      type_cases(env, arg.exp_type, ty_expected, true, loc, branches);
+      type_cases(
+        ~in_function?,
+        env,
+        arg.exp_type,
+        ty_expected,
+        true,
+        loc,
+        branches.txt,
+      );
     re({
       exp_desc: TExpMatch(arg, val_cases, partial),
       exp_loc: loc,
@@ -916,8 +1440,24 @@ and type_expect_ =
       exp_type: instance(env, ty_expected),
       exp_env: env,
     });
+  | PExpPrim0(p0) =>
+    let rettype = prim0_type(p0);
+    rue({
+      exp_desc: TExpPrim0(p0),
+      exp_loc: loc,
+      exp_extra: [],
+      exp_attributes: attributes,
+      exp_type: rettype,
+      exp_env: env,
+    });
   | PExpPrim1(p1, sarg) =>
-    let (argtype, rettype) = prim1_type(p1);
+    let (argtypes, rettype) =
+      filter_arrow(env, instance(env, prim1_type(p1)), [Unlabeled]);
+    let argtype =
+      switch (argtypes) {
+      | [arg] => arg
+      | _ => failwith("Impossible: invalid prim1 type arity")
+      };
     let arg = type_expect(env, sarg, mk_expected(argtype));
     rue({
       exp_desc: TExpPrim1(p1, arg),
@@ -928,7 +1468,17 @@ and type_expect_ =
       exp_env: env,
     });
   | PExpPrim2(p2, sarg1, sarg2) =>
-    let (arg1type, arg2type, rettype) = prim2_type(p2);
+    let (argtypes, rettype) =
+      filter_arrow(
+        env,
+        instance(env, prim2_type(p2)),
+        [Unlabeled, Unlabeled],
+      );
+    let (arg1type, arg2type) =
+      switch (argtypes) {
+      | [arg1, arg2] => (arg1, arg2)
+      | _ => failwith("Impossible: invalid prim2 type arity")
+      };
     let arg1 = type_expect(env, sarg1, mk_expected(arg1type));
     let arg2 = type_expect(env, sarg2, mk_expected(arg2type));
     rue({
@@ -940,7 +1490,12 @@ and type_expect_ =
       exp_env: env,
     });
   | PExpPrimN(p, sargs) =>
-    let (argtypes, rettype) = primn_type(p);
+    let (argtypes, rettype) =
+      filter_arrow(
+        env,
+        instance(env, primn_type(p)),
+        List.map(_ => Unlabeled, sargs),
+      );
     let args =
       List.map2(
         (sarg, argtype) => type_expect(env, sarg, mk_expected(argtype)),
@@ -1004,8 +1559,8 @@ and type_expect_ =
       );
 
     let (ifso, ifnot) =
-      switch (sifnot.pexp_desc) {
-      | PExpBlock([]) =>
+      switch (sifnot) {
+      | None =>
         let void_exp = {
           exp_desc: TExpConstant(Const_void),
           exp_loc: loc,
@@ -1025,7 +1580,7 @@ and type_expect_ =
           );
         let ifnot = {...void_exp, exp_desc: TExpBlock([void_exp])};
         (ifso, ifnot);
-      | _ =>
+      | Some(sifnot) =>
         let ifso = type_expect(env, sifso, ty_expected_explained);
         let ifnot = type_expect(env, sifnot, ty_expected_explained);
         /* Both types should match */
@@ -1071,13 +1626,13 @@ and type_expect_ =
         },
         sinit,
       );
-    let env =
+    let body_env =
       Option.value(~default=env, Option.map(init => init.exp_env, init));
     let cond =
       Option.map(
         scond => {
           type_expect(
-            env,
+            body_env,
             scond,
             mk_expected(
               ~explanation=Loop_conditional,
@@ -1089,12 +1644,12 @@ and type_expect_ =
       );
     let inc =
       Option.map(
-        sinc => {type_expect(env, sinc, mk_expected(newvar()))},
+        sinc => {type_expect(body_env, sinc, mk_expected(newvar()))},
         sinc,
       );
     let body =
       type_expect(
-        env,
+        body_env,
         sbody,
         mk_expected(~explanation=Loop_body, Builtin_types.type_void),
       );
@@ -1127,6 +1682,33 @@ and type_expect_ =
       exp_type: Builtin_types.type_void,
       exp_env: env,
     })
+  | PExpReturn(sarg) =>
+    switch (in_function) {
+    | Some((_, _, ret_type)) =>
+      let arg =
+        switch (sarg) {
+        | Some(sarg) => Some(type_expect(env, sarg, mk_expected(ret_type)))
+        | None =>
+          with_explanation(() =>
+            unify_exp_types(
+              loc,
+              env,
+              instance(env, Builtin_types.type_void),
+              ret_type,
+            )
+          );
+          None;
+        };
+      rue({
+        exp_desc: TExpReturn(arg),
+        exp_loc: loc,
+        exp_extra: [],
+        exp_attributes: attributes,
+        exp_type: newvar(),
+        exp_env: env,
+      });
+    | None => failwith("Impossible: return outside of function")
+    }
   | PExpConstraint(sarg, styp) =>
     begin_def();
     let cty = Typetexp.transl_simple_type(env, false, styp);
@@ -1134,7 +1716,7 @@ and type_expect_ =
     end_def();
     generalize_structure(ty);
     let (arg, ty') = (
-      List.hd @@ type_arguments(env, [sarg], [ty], [instance(env, ty)]),
+      type_argument(env, sarg, ty, instance(env, ty)),
       instance(env, ty),
     );
     rue({
@@ -1163,7 +1745,12 @@ and type_expect_ =
         ([expr], expr.exp_type);
       | [e, ...es] =>
         let expr =
-          type_statement_expr(~explanation=Sequence_left_hand_side, env, e);
+          type_statement_expr(
+            ~explanation=Sequence_left_hand_side,
+            ~in_function?,
+            env,
+            e,
+          );
         let (exprs, typ) = process_es(expr.exp_env, es);
         ([expr, ...exprs], typ);
       };
@@ -1177,78 +1764,62 @@ and type_expect_ =
       exp_type: typ,
       exp_env: env,
     });
-  | PExpNull =>
+  | PExpUse(module_, items) =>
+    let path = Typetexp.lookup_module(env, module_.loc, module_.txt, None);
+    let (newenv, items) =
+      switch (items) {
+      | PUseAll => (Env.use_full_signature(path, env), TUseAll)
+      | PUseItems(items) =>
+        let (env, items) = Env.use_partial_signature(path, items, env);
+        (env, TUseItems(items));
+      };
     rue({
-      exp_desc: TExpNull,
+      exp_desc: TExpUse(Location.mkloc(path, module_.loc), items),
       exp_loc: loc,
       exp_extra: [],
       exp_attributes: attributes,
       exp_type: instance(env, Builtin_types.type_void),
-      exp_env: env,
-    })
+      exp_env: newenv,
+    });
   };
 }
 
 and type_function =
     (~in_function=?, loc, attrs, env, ty_expected_explained, l, caselist) => {
   let {ty: ty_expected, explanation} = ty_expected_explained;
-  /*Format.eprintf "@[type_function: expected: %a@]@." Printtyp.raw_type_expr ty_expected;*/
-  let (loc_fun, ty_fun) =
-    switch (in_function) {
-    | Some(p) => p
-    | None => (loc, instance(env, ty_expected))
-    };
+  let (loc_fun, ty_fun) = (loc, instance(env, ty_expected));
 
-  let separate =
-    Grain_utils.Config.principal^ || Env.has_local_constraints(env);
+  let separate = Env.has_local_constraints(env);
   if (separate) {
     begin_def();
   };
-  let rec arity = caselist =>
-    switch (caselist) {
-    | [] => failwith("Impossible: type_function: empty lambda")
-    | [{pmb_pat: {ppat_desc: PPatConstraint(p, _)}, _} as mb] =>
-      arity([{...mb, pmb_pat: p}])
-    | [{pmb_pat: {ppat_desc: PPatTuple(args)}, _}] => List.length(args)
-    /* FIXME: Less hard-coding, please */
-    | [{pmb_pat: {ppat_desc: PPatConstruct({txt: ident, _}, []), _}, _}]
-        when Identifier.equal(ident, Identifier.IdentName("()")) => 0
-    | _ => failwith("Impossible: type_function: impossible caselist")
-    };
-  let arity = arity(caselist);
   let exp_inst = instance(env, ty_expected);
-  /*Format.eprintf "@[type_function: pre: %a@]@." Printtyp.raw_type_expr exp_inst;*/
-  let (ty_arg, ty_res) =
-    try(filter_arrow(arity, env, exp_inst)) {
-    | Unify(_) =>
-      raise(
-        Error(
-          loc_fun,
-          env,
-          Too_many_arguments(in_function != None, ty_fun, explanation),
-        ),
-      )
+  let (ty_args, ty_res) =
+    try(filter_arrow(env, exp_inst, l)) {
+    | Filter_arrow_failed(err) =>
+      let err =
+        switch (err) {
+        | Unification_error(unif_err) => Expr_type_clash(unif_err, None)
+        | Label_mismatch({got, expected, expected_type}) =>
+          Function_label_mismatch({got, expected, expected_type, explanation})
+        | Arity_mismatch => Arity_mismatch(ty_fun, explanation)
+        | Not_a_function => Not_a_function(ty_fun, explanation)
+        };
+      raise(Error(loc_fun, env, err));
     };
-
-  /*let rec fmt_args ppf = function
-      | [] -> Format.fprintf ppf ")"
-      | a::tl ->
-        Format.fprintf ppf "%a, %a" Printtyp.raw_type_expr a fmt_args tl in
-    Format.eprintf "@[type_function: %i@ (%a -> %a@]@." (get_current_level())
-      fmt_args (ty_arg) Printtyp.raw_type_expr ty_res;*/
   if (separate) {
     end_def();
-    List.iter(generalize_structure, ty_arg);
+    List.iter(generalize_structure, ty_args);
     generalize_structure(ty_res);
   };
   let normalized_arg_type =
-    switch (ty_arg) {
+    switch (ty_args) {
     | [] => Builtin_types.type_void
-    | _ => newty(TTyTuple(ty_arg))
+    | _ => newty(TTyTuple(ty_args))
     };
   let (cases, partial) =
     type_cases(
-      ~in_function=(loc_fun, ty_fun),
+      ~in_function=(loc_fun, ty_args, ty_res),
       env,
       normalized_arg_type,
       ty_res,
@@ -1256,75 +1827,51 @@ and type_function =
       loc,
       caselist,
     );
-  /* TODO: Decide if this should be added to TExpLambda */
-  /*let param = name_pattern "param" cases in*/
   re({
     exp_desc: TExpLambda(cases, partial),
     exp_loc: loc,
     exp_extra: [],
     exp_attributes: attrs,
-    exp_type: instance(env, newgenty(TTyArrow(ty_arg, ty_res, TComOk))),
+    exp_type:
+      instance(
+        env,
+        newgenty(TTyArrow(List.combine(l, ty_args), ty_res, TComOk)),
+      ),
     exp_env: env,
   });
 }
 
-and type_arguments = (~recarg=?, env, sargs, tys_expected', tys_expected) =>
+and type_argument =
+    (~in_function=?, ~recarg=?, env, sarg, ty_expected', ty_expected) => {
   /* ty_expected' may be generic */
-  /* Note (Philip): I think the heavy lifting of this function
-     was there to support optional arguments (which we currently don't). */
-  List.map2(
-    (sarg, (targ', targ)) => {
-      let texp = type_expect(~recarg?, env, sarg, mk_expected(targ'));
-      unify_exp(env, texp, targ);
-      texp;
-    },
-    sargs,
-    List.combine(tys_expected', tys_expected),
-  )
+  let texp =
+    type_expect(
+      ~in_function?,
+      ~recarg?,
+      env,
+      sarg,
+      mk_expected(ty_expected'),
+    );
+  unify_exp(env, texp, ty_expected);
+  texp;
+}
 
-and type_application = (env, funct, args) => {
+and type_application = (~in_function=?, ~loc, env, funct, sargs) => {
   /* funct.exp_type may be generic */
-  /*** Arguments, return value */
   let ty_fun = expand_head(env, funct.exp_type);
-  let (ty_args, ty_ret, ty_level) =
+  let (ty_args, ty_ret) =
     switch (ty_fun.desc) {
     | TTyVar(_) =>
-      let t_args = List.map(x => newvar(), args)
+      let t_args = List.map(arg => (arg.paa_label, newvar()), sargs)
       and t_ret = newvar();
-      /*let not_identity = function
-          | TExpIdent(_,_,{val_kind=TValPrim
-                               {Primitive.prim_name="%identity"}}) ->
-            false
-          | _ -> true
-        in
-        List.iter2 (fun arg t_arg ->
-            if ty_fun.level >= t_arg.level && not_identity funct.exp_desc then
-              Location.prerr_warning arg.pexp_loc Warnings.Unused_argument
-          ) args t_args;*/
       unify(
         env,
         ty_fun,
         newty(TTyArrow(t_args, t_ret, TComLink(ref(TComUnknown)))),
       );
-      (t_args, t_ret, ty_fun.level);
-    | TTyArrow(t_args, t_ret, _)
-        when List.length(t_args) == List.length(args) => (
-        t_args,
-        t_ret,
-        ty_fun.level,
-      )
-    | TTyArrow(t_args, t_ret, _) =>
-      raise(
-        Error(
-          funct.exp_loc,
-          env,
-          Arity_mismatch(
-            expand_head(env, funct.exp_type),
-            List.length(args),
-          ),
-        ),
-      )
-    | td =>
+      (t_args, t_ret);
+    | TTyArrow(t_args, t_ret, _) => (t_args, t_ret)
+    | _ =>
       raise(
         Error(
           funct.exp_loc,
@@ -1334,25 +1881,213 @@ and type_application = (env, funct, args) => {
       )
     };
 
-  let typed_args =
-    type_arguments(env, args, ty_args, List.map(instance(env), ty_args));
-  (typed_args, instance(env, ty_ret));
+  let ordered_labels = List.map(fst, ty_args);
+
+  let (labeled_sargs, unlabeled_sargs) =
+    List.partition(
+      sarg => {
+        switch (sarg.paa_label) {
+        | Labeled(_) => true
+        | _ => false
+        }
+      },
+      sargs,
+    );
+
+  let (used_labeled_tyargs, unused_tyargs) =
+    List.partition(
+      ((l, _)) => {
+        List.exists(
+          sarg => same_label_name(l, sarg.paa_label),
+          labeled_sargs,
+        )
+      },
+      ty_args,
+    );
+
+  let rec type_args =
+          (
+            args,
+            remaining_sargs,
+            remaining_used_labeled_tyargs,
+            remaining_unused_tyargs,
+          ) => {
+    let rec extract_label = (l, tyargs) => {
+      switch (tyargs) {
+      | [] => (None, [])
+      | [(tyl, _) as tyarg, ...rest_tyargs] when same_label_name(tyl, l) => (
+          Some(tyarg),
+          rest_tyargs,
+        )
+      | [tyarg, ...rest_tyargs] =>
+        let (res, rest_tyargs) = extract_label(l, rest_tyargs);
+        (res, [tyarg, ...rest_tyargs]);
+      };
+    };
+    let rec next_tyarg = tyargs => {
+      switch (tyargs) {
+      | [] => (None, [])
+      | [(tyl, _) as tyarg, ...rest_tyargs] when !is_optional(tyl) => (
+          Some(tyarg),
+          rest_tyargs,
+        )
+      | [tyarg, ...rest_tyargs] =>
+        let (res, rest_tyargs) = next_tyarg(rest_tyargs);
+        (res, [tyarg, ...rest_tyargs]);
+      };
+    };
+    switch (remaining_sargs) {
+    | [] => (args, remaining_unused_tyargs)
+    | [sarg, ...remaining_sargs] =>
+      let (
+        corresponding_tyarg,
+        remaining_used_labeled_tyargs,
+        remaining_unused_tyargs,
+      ) =
+        switch (sarg.paa_label) {
+        | Default(_) =>
+          failwith("Impossible: optional argument in application")
+        | Labeled(_) =>
+          let (corresponding_tyarg, remaining_used_labeled_tyargs) =
+            extract_label(sarg.paa_label, remaining_used_labeled_tyargs);
+          (
+            corresponding_tyarg,
+            remaining_used_labeled_tyargs,
+            remaining_unused_tyargs,
+          );
+        | Unlabeled =>
+          let (corresponding_tyarg, remaining_unused_tyargs) =
+            next_tyarg(remaining_unused_tyargs);
+          (
+            corresponding_tyarg,
+            remaining_used_labeled_tyargs,
+            remaining_unused_tyargs,
+          );
+        };
+      switch (corresponding_tyarg) {
+      | Some((l, ty)) =>
+        let arg =
+          if (!is_optional(l)) {
+            (
+              () =>
+                type_argument(
+                  ~in_function?,
+                  env,
+                  sarg.paa_expr,
+                  ty,
+                  instance(env, ty),
+                )
+            );
+          } else {
+            (
+              () =>
+                option_some(
+                  env,
+                  type_argument(
+                    ~in_function?,
+                    env,
+                    sarg.paa_expr,
+                    extract_option_type(env, ty),
+                    extract_option_type(env, instance(env, ty)),
+                  ),
+                )
+            );
+          };
+        type_args(
+          [(l, arg), ...args],
+          remaining_sargs,
+          remaining_used_labeled_tyargs,
+          remaining_unused_tyargs,
+        );
+      | None =>
+        switch (sarg.paa_label) {
+        | Unlabeled =>
+          raise(
+            Error(
+              loc,
+              env,
+              Apply_too_many_arguments(
+                expand_head(env, funct.exp_type),
+                unused_tyargs,
+              ),
+            ),
+          )
+        | _ =>
+          raise(
+            Error(
+              sarg.paa_loc,
+              env,
+              Apply_unknown_label(
+                label_name(sarg.paa_label),
+                List.filter_map(
+                  l => {
+                    switch (l) {
+                    | Unlabeled => None
+                    | _ => Some(label_name(l))
+                    }
+                  },
+                  ordered_labels,
+                ),
+              ),
+            ),
+          )
+        }
+      };
+    };
+  };
+
+  let (args, remaining_tyargs) =
+    type_args([], sargs, used_labeled_tyargs, unused_tyargs);
+
+  let omitted_args =
+    List.map(
+      ((l, ty)) => {
+        switch (l) {
+        | Default(_) =>
+          // omitted optional argument
+          (l, option_none(env, instance(env, ty), Location.dummy_loc))
+        | _ =>
+          let missing_args =
+            List.filter(((l, _)) => !is_optional(l), remaining_tyargs);
+          raise(Error(loc, env, Apply_too_few_arguments(missing_args)));
+        }
+      },
+      remaining_tyargs,
+    );
+
+  // Typecheck all arguments.
+  // Order here is important; rev_map would be incorrect.
+  let typed_args = List.map(((l, argf)) => (l, argf()), List.rev(args));
+
+  (ordered_labels, omitted_args @ typed_args, instance(env, ty_ret));
 }
 
 and type_construct = (env, loc, lid, sarg, ty_expected_explained, attrs) => {
   let {ty: ty_expected, explanation} = ty_expected_explained;
+  let (sargs, is_record_cstr) =
+    switch (sarg) {
+    | PExpConstrSingleton => ([], false)
+    | PExpConstrTuple(sargs) => (sargs, false)
+    | PExpConstrRecord(rfs) => (
+        [
+          {
+            pexp_desc: PExpRecord(None, rfs),
+            pexp_attributes: attrs,
+            pexp_loc: loc,
+            pexp_core_loc: loc,
+          },
+        ],
+        true,
+      )
+    };
+  let attrs = Typetexp.type_attributes(attrs);
   let opath =
     try({
       let (p0, p, _) = extract_concrete_variant(env, ty_expected);
-      Some((
-        p0,
-        p,
-        ty_expected.level == generic_level || ! Grain_utils.Config.principal^,
-      ));
+      Some((p0, p, true));
     }) {
     | Not_found => None
     };
-
   let constrs = Typetexp.find_all_constructors(env, lid.loc, lid.txt);
   let constr =
     wrap_disambiguate(
@@ -1361,15 +2096,20 @@ and type_construct = (env, loc, lid, sarg, ty_expected_explained, attrs) => {
       Constructor.disambiguate(lid, env, opath),
       constrs,
     );
-  /*Env.mark_constructor Env.Positive env (Identifier.last lid.txt) constr;*/
-  let sargs =
-    switch (sarg) {
-    | None => []
-    | Some({pexp_desc: PExpTuple(sel)}) when constr.cstr_arity > 1 =>
-      /*|| Builtin_attributes.explicit_arity attrs*/
-      sel
-    | Some(se) => [se]
-    };
+  let is_record_cstr_def = constr.cstr_inlined != None;
+  if (is_record_cstr_def != is_record_cstr) {
+    raise(
+      Error(
+        loc,
+        env,
+        Inlined_record_misuse(
+          lid.txt,
+          if (is_record_cstr_def) {"record"} else {"tuple"},
+          if (is_record_cstr) {"record"} else {"tuple"},
+        ),
+      ),
+    );
+  };
   if (List.length(sargs) != constr.cstr_arity) {
     raise(
       Error(
@@ -1383,8 +2123,7 @@ and type_construct = (env, loc, lid, sarg, ty_expected_explained, attrs) => {
       ),
     );
   };
-  let separate =
-    Grain_utils.Config.principal^ || Env.has_local_constraints(env);
+  let separate = Env.has_local_constraints(env);
   if (separate) {
     begin_def();
     begin_def();
@@ -1392,7 +2131,7 @@ and type_construct = (env, loc, lid, sarg, ty_expected_explained, attrs) => {
   let (ty_args, ty_res) = instance_constructor(constr);
   let texp =
     re({
-      exp_desc: TExpConstruct(lid, constr, []),
+      exp_desc: TExpConstruct(lid, constr, TExpConstrTuple([])),
       exp_loc: loc,
       exp_extra: [],
       exp_attributes: attrs,
@@ -1437,17 +2176,33 @@ and type_construct = (env, loc, lid, sarg, ty_expected_explained, attrs) => {
             raise (Error(loc, env, Inlined_record_expected))
         end*/
 
-  let args = type_arguments(~recarg, env, sargs, ty_args, ty_args0);
+  let args =
+    List.map2(
+      (sarg, (ty_arg, ty_arg0)) =>
+        type_argument(~recarg, env, sarg, ty_arg, ty_arg0),
+      sargs,
+      List.combine(ty_args, ty_args0),
+    );
+  let arg =
+    if (is_record_cstr) {
+      switch (args) {
+      | [{exp_desc: TExpRecord(_, rfs)}] => TExpConstrRecord(rfs)
+      | _ =>
+        failwith("Impossible: record constructor inner expression not record")
+      };
+    } else {
+      TExpConstrTuple(args);
+    };
   /* NOTE: shouldn't we call "re" on this final expression? -- AF */
-  {...texp, exp_desc: TExpConstruct(lid, constr, args)};
+  {...texp, exp_desc: TExpConstruct(lid, constr, arg)};
 }
 
 /* Typing of statements (expressions whose values are discarded) */
 
-and type_statement_expr = (~explanation=?, env, sexp) => {
+and type_statement_expr = (~explanation=?, ~in_function=?, env, sexp) => {
   let loc = final_subexpression(sexp).pexp_loc;
   begin_def();
-  let exp = type_exp(env, sexp);
+  let exp = type_exp(~in_function?, env, sexp);
   end_def();
   let ty = expand_head(env, exp.exp_type)
   and tv = newvar();
@@ -1523,8 +2278,7 @@ and type_cases =
       Format.printf "lev = %d@.%a@." lev Printtyp.raw_type_expr ty_res; */
   /* Do we need to propagate polymorphism */
   let propagate =
-    Grain_utils.Config.principal^  /*has_gadts ||*/
-    || repr(ty_arg).level == generic_level
+    repr(ty_arg).level == generic_level
     || (
       switch (caselist) {
       | [{pmb_pat}] when is_var(pmb_pat) => false
@@ -1540,31 +2294,14 @@ and type_cases =
   let pat_env_list =
     List.map(
       ({pmb_pat, pmb_body}) => {
-        if (Grain_utils.Config.principal^) {
-          begin_def();
-        }; /* propagation of pattern */
         let scope = None /*Some (Annot.Idef loc)*/;
         let (pat, ext_env, force, unpacks) = {
-          let partial =
-            if (Grain_utils.Config.principal^) {
-              /* || erase_either*/
-              Some(false);
-            } else {
-              None;
-            };
+          let partial = None;
           let ty_arg = instance(~partial?, env, ty_arg);
           Typepat.type_pattern(~lev, env, pmb_pat, scope, ty_arg);
         };
 
         pattern_force := force @ pattern_force^;
-        let pat =
-          if (Grain_utils.Config.principal^) {
-            end_def();
-            iter_pattern(({pat_type: t}) => generalize_structure(t), pat);
-            {...pat, pat_type: instance(ext_env, pat.pat_type)};
-          } else {
-            pat;
-          };
 
         (pat, (ext_env, unpacks));
       },
@@ -1599,27 +2336,11 @@ and type_cases =
     List.iter(iter_pattern(({pat_type: t}) => generalize(t)), patl);
   };
   /* type bodies */
-  let in_function =
-    if (List.length(caselist) == 1) {
-      in_function;
-    } else {
-      None;
-    };
   let cases =
     List.map2(
       ((pat, (ext_env, unpacks)), {pmb_pat, pmb_body, pmb_guard, pmb_loc}) => {
         let sexp = pmb_body /*wrap_unpacks pmb_body unpacks*/;
-        let ty_res' =
-          if (Grain_utils.Config.principal^) {
-            begin_def();
-            let ty = instance(~partial=true, env, ty_res);
-            end_def();
-            generalize_structure(ty);
-            ty;
-          } else {
-            /*else if contains_gadt env pmb_body then correct_levels ty_res*/
-            ty_res;
-          };
+
         /*Format.eprintf "@[%i %i, ty_res' =@ %a@]@." lev (get_current_level())
           Printtyp.raw_type_expr ty_res';*/
         let guard =
@@ -1628,6 +2349,7 @@ and type_cases =
           | Some(scond) =>
             Some(
               type_expect(
+                ~in_function?,
                 ext_env,
                 scond,
                 mk_expected(Builtin_types.type_bool),
@@ -1635,12 +2357,12 @@ and type_cases =
             )
           };
         let exp =
-          type_expect(~in_function?, ext_env, sexp, mk_expected(ty_res'));
+          type_expect(~in_function?, ext_env, sexp, mk_expected(ty_res));
         {
           mb_pat: pat,
           mb_body: {
             ...exp,
-            exp_type: instance(env, ty_res'),
+            exp_type: instance(env, ty_res),
           },
           mb_guard: guard,
           mb_loc: pmb_loc,
@@ -1650,10 +2372,6 @@ and type_cases =
       caselist,
     );
 
-  if (Grain_utils.Config.principal^) /*|| has_gadts*/ {
-    let ty_res' = instance(env, ty_res);
-    List.iter(c => unify_exp(env, c.mb_body, ty_res'), cases);
-  };
   let do_init = /*has_gadts ||*/ needs_exhaust_check;
   let (lev, env) =
     if (do_init) {
@@ -1663,9 +2381,9 @@ and type_cases =
     };
   let ty_arg_check =
     if (do_init) {
-      /* Hack: use for_saving to copy variables too */
+      /* Hack: use for_cmi to copy variables too */
       Subst.type_expr(
-        Subst.for_saving(Subst.identity),
+        Subst.for_cmi(Subst.identity),
         ty_arg,
       );
     } else {
@@ -1707,18 +2425,17 @@ and type_let =
     (
       ~check=s => Warnings.Unused_var(s),
       ~check_strict=s => Warnings.Unused_var_strict(s),
+      ~in_function=?,
       env,
       rec_flag,
       mut_flag,
+      global_flag,
       spat_sexp_list,
       scope,
       allow,
     ) => {
   open Ast_helper;
   begin_def();
-  if (Grain_utils.Config.principal^) {
-    begin_def();
-  };
   /*let is_fake_let =
       match spat_sexp_list with
       | [{pvb_expr={pexp_desc=PExpMatch(
@@ -1728,29 +2445,19 @@ and type_let =
           false
     in*/
   /*let check = if is_fake_let then check_strict else check in*/
-  let spatl =
-    List.map(
-      ({pvb_pat: spat, pvb_expr: sexp}) =>
-        (
-          [],
-          switch (spat.ppat_desc, sexp.pexp_desc) {
-          | (PPatAny | PPatConstraint(_), _) => spat
-          /*| _, PExpConstraint (_, sty) when !Grain_utils.Config.principal ->
-            (* propagate type annotation to pattern,
-               to allow it to be generalized in -principal mode *)
-            Pat.constraint_
-              ~loc:{spat.ppat_loc with Location.loc_ghost=true}
-              spat
-              sty*/
-          | _ => spat
-          },
-        ),
-      spat_sexp_list,
-    );
+  let spatl = List.map(({pvb_pat: spat}) => ([], spat), spat_sexp_list);
   let nvs = List.map(_ => newvar(), spatl);
   let mut = mut_flag == Mutable;
   let (pat_list, new_env, force, unpacks, pv) =
-    type_pattern_list(~mut, env, spatl, scope, nvs, allow);
+    type_pattern_list(
+      ~mut,
+      ~global=global_flag,
+      env,
+      spatl,
+      scope,
+      nvs,
+      allow,
+    );
   let attrs_list = List.map(fst, spatl);
   let is_recursive = rec_flag == Recursive;
   /* If recursive, first unify with an approximation of the expression */
@@ -1779,20 +2486,7 @@ and type_let =
         iter_pattern finalize_variant pat
       end)
     pat_list;*/
-  /* Generalize the structure */
-  let pat_list =
-    if (Grain_utils.Config.principal^) {
-      end_def();
-      List.map(
-        pat => {
-          iter_pattern(pat => generalize_structure(pat.pat_type), pat);
-          {...pat, pat_type: instance(env, pat.pat_type)};
-        },
-        pat_list,
-      );
-    } else {
-      pat_list;
-    };
+
   /* Only bind pattern variables after generalizing */
   List.iter(f => f(), force);
   let exp_env =
@@ -1886,18 +2580,11 @@ and type_let =
         | TTyPoly(ty, tl) =>
           /*Printf.eprintf "type_let: TTyPoly\n";*/
           begin_def();
-          if (Grain_utils.Config.principal^) {
-            begin_def();
-          };
           let (vars, ty') = instance_poly(~keep_names=true, true, tl, ty);
-          if (Grain_utils.Config.principal^) {
-            end_def();
-            generalize_structure(ty');
-          };
           let exp =
             /*Builtin_attributes.warning_scope pvb_attributes
               (fun () -> type_expect exp_env sexp (mk_expected ty'))*/
-            type_expect(exp_env, sexp, mk_expected(ty'));
+            type_expect(~in_function?, exp_env, sexp, mk_expected(ty'));
 
           end_def();
           check_univars(env, true, "definition", exp, pat.pat_type, vars);
@@ -1908,7 +2595,12 @@ and type_let =
               Printtyp.raw_type_expr pat.pat_type;*/
           /*Builtin_attributes.warning_scope pvb_attributes (fun () ->
             type_expect exp_env sexp (mk_expected pat.pat_type))*/
-          type_expect(exp_env, sexp, mk_expected(pat.pat_type))
+          type_expect(
+            ~in_function?,
+            exp_env,
+            sexp,
+            mk_expected(pat.pat_type),
+          )
         };
       },
       spat_sexp_list,
@@ -1923,17 +2615,21 @@ and type_let =
         (fun () ->
            Location.prerr_warning pvb_pat.ppat_loc Warnings.Unused_rec_flag
         )
-    end;
-    List.iter2
-      (fun pat (attrs, exp) ->
-         Builtin_attributes.warning_scope ~ppwarning:false attrs
-           (fun () ->
-              ignore(check_partial env pat.pat_type pat.pat_loc
-                       [case pat exp])
-           )
+    end;*/
+  List.iter2(
+    (pat, (attrs, exp)) => {
+      ignore(
+        check_partial(
+          env,
+          pat.pat_type,
+          pat.pat_loc,
+          [{mb_pat: pat, mb_body: exp, mb_guard: None, mb_loc: pat.pat_loc}],
+        ),
       )
-      pat_list
-      (List.map2 (fun (attrs, _) e -> attrs, e) spatl exp_list);*/
+    },
+    pat_list,
+    List.map2(((attrs, _), e) => (attrs, e), spatl, exp_list),
+  );
   end_def();
   let mutable_let = mut_flag == Mutable;
   List.iter2(
@@ -1972,21 +2668,12 @@ and type_let =
 }
 
 and type_label_access = (env, srecord, lid) => {
-  /* if !Clflags.principal then begin_def (); */
   let record = type_exp(~recarg=Allowed, env, srecord);
-  /* if !Clflags.principal then begin */
-  /* end_def (); */
-  /* generalize_structure record.exp_type */
-  /* end; */
   let ty_exp = record.exp_type;
   let opath =
     try({
       let (p0, p, _) = extract_concrete_record(env, ty_exp);
-      Some((
-        p0,
-        p,
-        repr(ty_exp).level == generic_level /*|| not !Clflags.principal*/,
-      ));
+      Some((p0, p, true));
     }) {
     | Not_found => None
     };
@@ -2005,7 +2692,7 @@ and type_label_access = (env, srecord, lid) => {
 and type_label_exp = (create, env, loc, ty_expected, (lid, label, sarg)) => {
   /* Here also ty_expected may be at generic_level */
   begin_def();
-  let separate = Clflags.principal^ || Env.has_local_constraints(env);
+  let separate = Env.has_local_constraints(env);
   if (separate) {
     begin_def();
     begin_def();
@@ -2035,9 +2722,7 @@ and type_label_exp = (create, env, loc, ty_expected, (lid, label, sarg)) => {
       } else {
         Some(Btype.snapshot());
       };
-    let arg =
-      List.hd @@
-      type_arguments(env, [sarg], [ty_arg], [instance(env, ty_arg)]);
+    let arg = type_argument(env, sarg, ty_arg, instance(env, ty_arg));
     end_def();
     try(
       {
@@ -2076,7 +2761,7 @@ and type_label_exp = (create, env, loc, ty_expected, (lid, label, sarg)) => {
 };
 
 let check_recursive_bindings = (env, vbs) =>
-  /* TODO: Implement */
+  // TODO: Implement
   ();
 
 /* Typing of toplevel bindings */
@@ -2089,6 +2774,7 @@ let type_binding = (env, rec_flag, mut_flag, spat_sexp_list, scope) => {
       env,
       rec_flag,
       mut_flag,
+      true,
       spat_sexp_list,
       scope,
       false,
@@ -2096,9 +2782,17 @@ let type_binding = (env, rec_flag, mut_flag, spat_sexp_list, scope) => {
 
   (pat_exp_list, new_env);
 };
-let type_let = (env, rec_flag, mut_flag, spat_sexp_list, scope) => {
+let type_let = (env, rec_flag, mut_flag, global_flag, spat_sexp_list, scope) => {
   let (pat_exp_list, new_env, _unpacks) =
-    type_let(env, rec_flag, mut_flag, spat_sexp_list, scope, false);
+    type_let(
+      env,
+      rec_flag,
+      mut_flag,
+      global_flag,
+      spat_sexp_list,
+      scope,
+      false,
+    );
   (pat_exp_list, new_env);
 };
 
@@ -2160,7 +2854,7 @@ let report_error = (env, ppf) =>
   | Constructor_arity_mismatch(lid, expected, provided) =>
     fprintf(
       ppf,
-      "@[The constructor %a@ expects %i argument(s),@ but is applied here to %i argument(s)@]",
+      "@[The constructor %a@ expects %i argument(s),@ but is called with %i argument(s)@]",
       identifier,
       lid,
       expected,
@@ -2235,28 +2929,95 @@ let report_error = (env, ppf) =>
     )
   | Apply_non_function(typ) => {
       reset_and_mark_loops(typ);
-      switch (repr(typ).desc) {
-      | TTyArrow(_) =>
+      fprintf(
+        ppf,
+        "@[<v>@[<2>This expression has type@ %a@]@ %s@]",
+        type_expr,
+        typ,
+        "This is not a function; it cannot be called.",
+      );
+    }
+  | Apply_too_many_arguments(typ, unused_tyargs) => {
+      reset_and_mark_loops(typ);
+      fprintf(ppf, "@[<v>@[<2>This function has type@ %a@]", type_expr, typ);
+      fprintf(ppf, "@ @[It is called with too many arguments.@]@]");
+      let unused_optional_arguments =
+        List.filter_map(
+          ((l, _)) =>
+            switch (l) {
+            | Default({txt: name}) => Some(name)
+            | _ => None
+            },
+          unused_tyargs,
+        );
+      let oxford = (ppf, args) => {
+        let rec oxford = (ppf, args) =>
+          switch (args) {
+          | [] => ()
+          | [arg1, arg2] => fprintf(ppf, "%s, or %s", arg1, arg2)
+          | [arg1, ...args] =>
+            fprintf(ppf, "%s, ", arg1);
+            oxford(ppf, args);
+          };
+
+        switch (args) {
+        | [] => ()
+        | [arg] => fprintf(ppf, "%s", arg)
+        | [arg1, arg2] => fprintf(ppf, "%s or %s", arg1, arg2)
+        | _ => oxford(ppf, args)
+        };
+      };
+      switch (unused_optional_arguments) {
+      | [] => ()
+      | labels =>
         fprintf(
           ppf,
-          "@[<v>@[<2>This function has type@ %a@]",
-          type_expr,
-          typ,
-        );
+          "@ @[Did you mean to supply an argument with label %a?@]@]",
+          oxford,
+          unused_optional_arguments,
+        )
+      };
+    }
+  | Apply_too_few_arguments(args) => {
+      List.iter(((_, typ)) => reset_and_mark_loops(typ), args);
+      let print_arg = ((l, arg)) => {
+        reset_and_mark_loops(arg);
+        switch (l) {
+        | Unlabeled => fprintf(ppf, "%a", type_expr, arg)
+        | _ =>
+          fprintf(ppf, "%s: %a", qualified_label_name(l), type_expr, arg)
+        };
+      };
+      let rec print_args = (ppf, args) => {
+        switch (args) {
+        | [] => ()
+        | [arg] => print_arg(arg)
+        | [arg, ...rest] =>
+          print_arg(arg);
+          fprintf(ppf, ",@ ");
+          print_args(ppf, rest);
+        };
+      };
+      switch (args) {
+      | [arg] =>
         fprintf(
           ppf,
-          "@ @[It is applied to too many arguments;@ %s@]@]",
-          "maybe you forgot a `;'.",
-        );
+          "@[<hov>This function call is missing an argument of type %a@]",
+          print_args,
+          args,
+        )
       | _ =>
         fprintf(
           ppf,
-          "@[<v>@[<2>This expression has type@ %a@]@ %s@]",
-          type_expr,
-          typ,
-          "This is not a function; it cannot be applied.",
+          "@[<hov>This function call is missing arguments of type %a@]",
+          print_args,
+          args,
         )
       };
+    }
+  | Apply_unknown_label(label, valid_labels) => {
+      fprintf(ppf, "This argument cannot be supplied with label %s.", label);
+      spellcheck(ppf, label, valid_labels);
     }
   | Label_multiply_defined(s) =>
     fprintf(ppf, "The record field label %s is defined several times", s)
@@ -2274,19 +3035,17 @@ let report_error = (env, ppf) =>
     fprintf(ppf, "The record field %a is not mutable", identifier, lid)
   | Assign_not_mutable(id) =>
     fprintf(ppf, "The identifier %a was not declared mutable", identifier, id)
-  | Arity_mismatch(typ, arity) =>
-    fprintf(
-      ppf,
-      "@[The type %a cannot be called with %d argument%s@]",
-      Printtyp.type_expr,
-      typ,
-      arity,
-      if (arity == 1) {
-        "";
-      } else {
-        "s";
-      },
-    )
+  | Arity_mismatch(ty, explanation) => {
+      reset_and_mark_loops(ty);
+      fprintf(ppf, "This function expects the wrong number of arguments,@ ");
+      fprintf(
+        ppf,
+        "it should have type@ %a%t",
+        type_expr,
+        ty,
+        report_type_expected_explanation_opt(explanation),
+      );
+    }
   | Wrong_name(eorp, ty_expected, kind, p, name, valid_names) => {
       let {ty, explanation} = ty_expected;
       reset_and_mark_loops(ty);
@@ -2411,27 +3170,43 @@ let report_error = (env, ppf) =>
         );
       };
     }
-  | Too_many_arguments(in_function, ty, explanation) => {
+  | Not_a_function(ty, explanation) => {
       reset_and_mark_loops(ty);
-      if (in_function) {
-        fprintf(ppf, "This function expects too many arguments,@ ");
+      fprintf(ppf, "This expression is not a function,@ ");
+      fprintf(
+        ppf,
+        "the expected type is@ %a%t",
+        type_expr,
+        ty,
+        report_type_expected_explanation_opt(explanation),
+      );
+    }
+  | Function_label_mismatch({got, expected, expected_type, explanation}) => {
+      reset_and_mark_loops(expected_type);
+      if (is_optional(got)) {
         fprintf(
           ppf,
-          "it should have type@ %a%t",
-          type_expr,
-          ty,
-          report_type_expected_explanation_opt(explanation),
+          "This function contains the argument %s@ ",
+          qualified_label_name(got),
         );
       } else {
-        fprintf(ppf, "This expression should not be a function,@ ");
         fprintf(
           ppf,
-          "the expected type is@ %a%t",
-          type_expr,
-          ty,
-          report_type_expected_explanation_opt(explanation),
+          "The expected function type contains the argument %s@ ",
+          qualified_label_name(expected),
         );
       };
+      fprintf(
+        ppf,
+        "which has a default value, but the matching argument does not.@ ",
+      );
+      fprintf(
+        ppf,
+        "The expected type is@ %a%t",
+        type_expr,
+        expected_type,
+        report_type_expected_explanation_opt(explanation),
+      );
     }
   | Scoping_let_module(id, ty) => {
       reset_and_mark_loops(ty);
@@ -2468,7 +3243,7 @@ let report_error = (env, ppf) =>
   | Not_a_variant_type(lid) =>
     fprintf(ppf, "The type %a@ is not a variant type", identifier, lid)
   | Incoherent_label_order => {
-      fprintf(ppf, "This function is applied to arguments@ ");
+      fprintf(ppf, "This function is called with arguments@ ");
       fprintf(ppf, "in an order different from other calls.@ ");
       fprintf(ppf, "This is only allowed when the real type is known.");
     }
@@ -2536,8 +3311,15 @@ let report_error = (env, ppf) =>
       ppf,
       "@[This form is not allowed as the type of the inlined record could escape.@]",
     )
-  | Inlined_record_expected =>
-    fprintf(ppf, "@[This constructor expects an inlined record argument.@]")
+  | Inlined_record_misuse(cstr_name, cstr_type, exp_type) =>
+    fprintf(
+      ppf,
+      "@[%a is a %s constructor but is treated like a %s constructor.@]",
+      identifier,
+      cstr_name,
+      cstr_type,
+      exp_type,
+    )
   | Invalid_extension_constructor_payload =>
     fprintf(
       ppf,
@@ -2589,5 +3371,3 @@ let () =
 let type_expect = (~in_function=?, env, e, ty) =>
   type_expect(~in_function?, env, e, ty);
 let type_exp = (env, e) => type_exp(env, e);
-let type_arguments = (env, es, t1s, t2s) =>
-  type_arguments(env, es, t1s, t2s);

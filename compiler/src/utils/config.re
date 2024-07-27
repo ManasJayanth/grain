@@ -1,13 +1,19 @@
+type digestable =
+  | Digestable
+  | NotDigestable;
+
 type config_opt =
-  | Opt((ref('a), 'a)): config_opt;
+  | Opt((ref('a), 'a, digestable)): config_opt;
 
 type saved_config_opt =
-  | SavedOpt((ref('a), 'a)): saved_config_opt;
+  | SavedOpt((ref('a), 'a, digestable)): saved_config_opt;
 
 type digestable_opt =
   | DigestableOpt('a): digestable_opt;
 
 type config = list(saved_config_opt);
+
+let empty: config = [];
 
 /* Here we model the API provided by cmdliner without introducing
    an explicit dependency on it (that's left to grainc). */
@@ -30,10 +36,10 @@ type config_spec =
 let opts: ref(list(config_opt)) = (ref([]): ref(list(config_opt)));
 let specs: ref(list(config_spec)) = (ref([]): ref(list(config_spec)));
 
-let internal_opt: 'a. 'a => ref('a) =
-  v => {
+let internal_opt: 'a. ('a, digestable) => ref('a) =
+  (v, digestable) => {
     let cur = ref(v);
-    opts := [Opt((cur, v)), ...opts^];
+    opts := [Opt((cur, v, digestable)), ...opts^];
     cur;
   };
 
@@ -45,15 +51,15 @@ let arg_info:
     ~env_docs: string=?,
     ~env_doc: string=?,
     ~env: string=?,
-    ~names: list(string)
+    list(string)
   ) =>
   Cmdliner.Arg.info = (
-  (~docs=?, ~docv=?, ~doc=?, ~env_docs=?, ~env_doc=?, ~env=?, ~names) => {
+  (~docs=?, ~docv=?, ~doc=?, ~env_docs=?, ~env_doc=?, ~env=?, names) => {
     let env =
       Option.map(
         e => {
           let (doc, docs) = (env_doc, env_docs);
-          Cmdliner.Arg.(env_var(~docs?, ~doc?, e));
+          Cmdliner.Cmd.Env.info(~docs?, ~doc?, e);
         },
         env,
       );
@@ -66,7 +72,7 @@ let arg_info:
       ~env_docs: string=?,
       ~env_doc: string=?,
       ~env: string=?,
-      ~names: list(string)
+      list(string)
     ) =>
     Cmdliner.Arg.info
 );
@@ -97,7 +103,7 @@ let opt:
     ~conv as c,
     v,
   ) => {
-    let cur = internal_opt(v);
+    let cur = internal_opt(v, Digestable);
     specs :=
       [
         Spec(
@@ -112,7 +118,7 @@ let opt:
                 ~env_docs?,
                 ~env_doc?,
                 ~env?,
-                ~names,
+                names,
               ),
             )
           ),
@@ -137,7 +143,7 @@ let toggle_flag:
   ) =>
   ref(bool) = (
   (~docs=?, ~docv=?, ~doc=?, ~env_docs=?, ~env_doc=?, ~env=?, ~names, default) => {
-    let cur = internal_opt(default);
+    let cur = internal_opt(default, Digestable);
     specs :=
       [
         Spec(
@@ -154,7 +160,7 @@ let toggle_flag:
                     ~env_docs?,
                     ~env_doc?,
                     ~env?,
-                    ~names,
+                    names,
                   ),
                 ),
               ],
@@ -183,21 +189,21 @@ let toggle_flag:
 let save_config = () => {
   let single_save =
     fun
-    | Opt((cur, _)) => SavedOpt((cur, cur^));
+    | Opt((cur, _, digestable)) => SavedOpt((cur, cur^, digestable));
   List.map(single_save, opts^);
 };
 
 let restore_config = {
   let single_restore =
     fun
-    | SavedOpt((ptr, value)) => ptr := value;
+    | SavedOpt((ptr, value, _)) => ptr := value;
   List.iter(single_restore);
 };
 
 let reset_config = () => {
   let single_reset =
     fun
-    | Opt((cur, default)) => cur := default;
+    | Opt((cur, default, _)) => cur := default;
   List.iter(single_reset, opts^);
 };
 
@@ -214,7 +220,14 @@ let get_root_config_digest = () => {
   | Some(dgst) => dgst
   | None =>
     let config_opts =
-      List.map((SavedOpt((_, opt))) => DigestableOpt(opt), root_config^);
+      root_config^
+      |> List.filter((SavedOpt((_, _, digestable))) =>
+           switch (digestable) {
+           | Digestable => true
+           | NotDigestable => false
+           }
+         )
+      |> List.map((SavedOpt((_, opt, _))) => DigestableOpt(opt));
     let config = Marshal.to_bytes(config_opts, []);
     let ret = Digest.to_hex(Digest.bytes(config));
     root_config_digest := Some(ret);
@@ -292,72 +305,6 @@ let preserve_config = thunk => {
 let preserve_all_configs = thunk =>
   preserve_root_config(() => preserve_config(thunk));
 
-let with_cli_options = (term: 'a): Cmdliner.Term.t('a) => {
-  open Cmdliner;
-  open Term;
-  let process_option = acc =>
-    fun
-    | Spec(arg, names, box) =>
-      const((a, b) => {
-        box := a;
-        b;
-      })
-      $ Arg.value(arg)
-      $ acc;
-  let folded = List.fold_left(process_option, const(term), specs^);
-  folded;
-};
-
-let with_unapplied_cli_options = (term: 'a): Cmdliner.Term.t('a) => {
-  open Cmdliner;
-  open Term;
-  let process_option = acc =>
-    fun
-    | Spec(arg, names, box) => const((a, b) => {b}) $ Arg.value(arg) $ acc;
-  let folded = List.fold_left(process_option, const(term), specs^);
-  folded;
-};
-
-let process_used_cli_options = term => {
-  open Cmdliner;
-  open Term;
-  let process_option = acc =>
-    fun
-    | Spec(arg, names, box) => {
-        const((a, (_, used), b) => {
-          if (List.fold_left(
-                (acc, name) =>
-                  acc
-                  || List.mem("--" ++ name, used)
-                  || List.mem("-" ++ name, used),
-                false,
-                names,
-              )) {
-            box := a;
-          };
-          b;
-        })
-        $ Arg.value(arg)
-        $ with_used_args(term)
-        $ acc;
-      };
-  let folded = List.fold_left(process_option, term, specs^);
-  folded;
-};
-
-let apply_inline_flags = (~err, flag_string) => {
-  open Cmdliner;
-  let cmd = (
-    process_used_cli_options(with_unapplied_cli_options(Term.const())),
-    Term.info("grainc"),
-  );
-  // Remove grainc-flags prefix
-  let len = String.length(flag_string) - 12;
-  let flag_string = String.sub(flag_string, 12, len);
-  let argv = Array.of_list(String.split_on_char(' ', flag_string));
-  Term.eval(~argv, ~err, cmd);
-};
-
 let option_conv = ((prsr, prntr)) => (
   x =>
     switch (prsr(x)) {
@@ -370,24 +317,25 @@ let option_conv = ((prsr, prntr)) => (
     | Some(x) => prntr(ppf, x),
 );
 
-type optimization_level =
-  | Level_zero
-  | Level_one
-  | Level_two
-  | Level_three;
+type profile =
+  | Release;
 
-let optimization_level =
+let profile =
   opt(
-    ~doc="Set the optimization level.",
-    ~names=["O"],
-    ~conv=
-      Cmdliner.Arg.enum([
-        ("0", Level_zero),
-        ("1", Level_one),
-        ("2", Level_two),
-        ("3", Level_three),
-      ]),
-    Level_three,
+    ~doc="Set a compilation profile.",
+    ~names=["profile"],
+    ~conv=option_conv(Cmdliner.Arg.enum([("release", Release)])),
+    None,
+  );
+
+let default_memory_base = 0x400;
+
+let memory_base =
+  opt(
+    ~doc="Set the start address for the Grain runtime heap.",
+    ~names=["memory-base"],
+    ~conv=option_conv(Cmdliner.Arg.int),
+    None,
   );
 
 let include_dirs =
@@ -411,9 +359,6 @@ let stdlib_dir =
 let color_enabled =
   toggle_flag(~names=["no-color"], ~doc="Disable colored output", true);
 
-// TODO: (#612) Add compiler flag when feature is complete or remove entirely
-let principal = ref(false);
-
 let initial_memory_pages =
   opt(
     ~names=["initial-memory-pages"],
@@ -430,29 +375,28 @@ let maximum_memory_pages =
     None,
   );
 
-let compilation_mode =
-  opt(
-    ~names=["compilation-mode"],
-    ~conv=
-      option_conv(
-        Cmdliner.Arg.enum([("normal", "normal"), ("runtime", "runtime")]),
-      ),
-    ~doc="Compilation mode (advanced use only)",
-    None,
+let import_memory =
+  toggle_flag(
+    ~names=["import-memory"],
+    ~doc="Import the memory from `env.memory`",
+    false,
   );
+
+type compilation_mode =
+  | Normal /* Standard compilation with regular bells and whistles */
+  | Runtime /* GC doesn't exist yet, allocations happen in runtime heap */;
+
+let compilation_mode = internal_opt(Normal, Digestable);
 
 let statically_link =
   toggle_flag(~names=["no-link"], ~doc="Disable static linking", true);
 
-let experimental_tail_call =
+let no_tail_call =
   toggle_flag(
-    ~names=["experimental-wasm-tail-call"],
-    ~doc="Enables tail-call optimization",
+    ~names=["no-wasm-tail-call"],
+    ~doc="Disables tail-call optimization",
     false,
   );
-
-// TODO: (#612) Add compiler flag when feature is complete or remove entirely
-let recursive_types = ref(false);
 
 let strict_sequence =
   toggle_flag(
@@ -463,14 +407,6 @@ let strict_sequence =
 
 /* For now, leave this as true */
 let safe_string = ref(true);
-
-let parser_debug_level =
-  opt(
-    ~names=["parser-debug-level"],
-    ~conv=Cmdliner.Arg.int,
-    ~doc="Debugging level for parser output",
-    0,
-  );
 
 let debug =
   toggle_flag(
@@ -547,34 +483,36 @@ let elide_type_info =
 let source_map =
   toggle_flag(~names=["source-map"], ~doc="Generate source maps", false);
 
-let lsp_mode =
-  toggle_flag(
-    ~names=["lsp"],
-    ~doc="Generate lsp errors and warnings only",
-    false,
-  );
+let print_warnings = internal_opt(true, NotDigestable);
 
-let print_warnings = internal_opt(true);
-
-/* To be filled in by grainc */
-let base_path = internal_opt("");
-
-let with_base_path = (path, func) => {
-  let old_base_path = base_path^;
-  base_path := path;
-  try({
-    let ret = func();
-    base_path := old_base_path;
-    ret;
-  }) {
-  | e =>
-    base_path := old_base_path;
-    raise(e);
-  };
+let with_cli_options = (term: 'a): Cmdliner.Term.t('a) => {
+  open Cmdliner;
+  open Term;
+  let process_option = acc =>
+    fun
+    | Spec(arg, names, box) =>
+      const((a, b) => {
+        box := a;
+        b;
+      })
+      $ Arg.value(arg)
+      $ acc;
+  let folded = List.fold_left(process_option, const(term), specs^);
+  compilation_mode := Normal;
+  folded;
 };
 
 let stdlib_directory = (): option(string) =>
-  Option.map(path => Files.derelativize(path), stdlib_dir^);
+  Option.map(
+    path => Filepath.(to_string(String.derelativize(path))),
+    stdlib_dir^,
+  );
+
+let wasi_polyfill_path = (): option(string) =>
+  Option.map(
+    path => Filepath.(to_string(String.derelativize(path))),
+    wasi_polyfill^,
+  );
 
 let module_search_path = () => {
   switch (stdlib_directory()) {
@@ -583,24 +521,21 @@ let module_search_path = () => {
   };
 };
 
-let apply_inline_flags = (~on_error, cmt_content) =>
-  if (Str.string_match(Str.regexp_string("grainc-flags"), cmt_content, 0)) {
-    let err_buf = Buffer.create(80);
-    let err = Format.formatter_of_buffer(err_buf);
-    let result = apply_inline_flags(~err, cmt_content);
-    switch (result) {
-    | `Ok(_) => ()
-    | `Version
-    | `Help => on_error(`Help)
-    | `Error(_) =>
-      Format.pp_print_flush(err, ());
-      on_error(`Message(Buffer.contents(err_buf)));
-    };
+let apply_attribute_flags = (~no_pervasives as np, ~runtime_mode as rm) => {
+  // Only apply options if attributes were explicitly given so as to not
+  // unintentionally override options set previously e.g. compiling a
+  // wasi-polyfill file in non-runtime-mode if @runtimeMode is not specified
+  if (np) {
+    no_pervasives := true;
   };
+  if (rm) {
+    compilation_mode := Runtime;
+  };
+};
 
-let with_inline_flags = (~on_error, cmt_content, thunk) => {
+let with_attribute_flags = (~no_pervasives, ~runtime_mode, thunk) => {
   preserve_config(() => {
-    apply_inline_flags(~on_error, cmt_content);
+    apply_attribute_flags(~no_pervasives, ~runtime_mode);
     thunk();
   });
 };
@@ -616,7 +551,7 @@ let get_implicit_opens = () => {
     } else {
       [Pervasives_mod];
     };
-  if (compilation_mode^ == Some("runtime")) {
+  if (compilation_mode^ == Runtime) {
     [];
   } else {
     // Pervasives goes first, just for good measure.

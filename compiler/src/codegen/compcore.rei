@@ -6,14 +6,10 @@ open Binaryen;
 type codegen_env = {
   name: option(string),
   num_args: int,
-  global_offset: int,
+  num_closure_args: int,
   stack_size,
-  import_global_offset: int,
-  import_offset: int,
   /* Allocated closures which need backpatching */
   backpatches: ref(list((Expression.t, closure_data))),
-  imported_funcs: Ident.tbl(Ident.tbl(int32)),
-  imported_globals: Ident.tbl(Ident.tbl(string)),
   required_imports: list(import),
 };
 

@@ -78,14 +78,21 @@ module NameChoice =
     /*Env.mark_type_used env (Path.last tpath) (Env.find_type tpath env);*/
     switch (lid.txt) {
     | Identifier.IdentName(s) =>
-      try(List.find(nd => get_name(nd) == s, descrs)) {
+      try(List.find(nd => get_name(nd) == s.txt, descrs)) {
       | Not_found =>
         let names = List.map(get_name, descrs);
         raise(
           Error(
             lid.loc,
             env,
-            WrongName("", mk_expected(newvar()), type_kind, tpath, s, names),
+            WrongName(
+              "",
+              mk_expected(newvar()),
+              type_kind,
+              tpath,
+              s.txt,
+              names,
+            ),
           ),
         );
       }
@@ -342,9 +349,33 @@ let disambiguate_lid_a_list = (loc, closed, env, opath, lid_a_list) => {
     | Not_found =>
       switch (opath) {
       | None =>
+        let id_str = Identifier.string_of_ident(lid.txt);
+        let inline_record_field =
+          Env.fold_constructors(
+            (cstr, suggestion) => {
+              switch (suggestion) {
+              | Some(_) => suggestion
+              | None =>
+                switch (cstr.cstr_inlined) {
+                | Some({type_kind: TDataRecord(rfs), _})
+                    when
+                      List.exists(rf => rf.Types.rf_name.name == id_str, rfs) =>
+                  Some(cstr.cstr_name)
+                | _ => None
+                }
+              }
+            },
+            None,
+            env,
+            None,
+          );
         Env.error(
-          Env.Unbound_label(lid.loc, Identifier.string_of_ident(lid.txt)),
-        )
+          switch (inline_record_field) {
+          | None => Env.Unbound_label(lid.loc, id_str)
+          | Some(suggestion) =>
+            Env.Unbound_label_with_alt(lid.loc, id_str, suggestion)
+          },
+        );
       | Some(_) => Label.disambiguate(lid, env, opath, [], ~warn)
       }
     };

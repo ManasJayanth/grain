@@ -1,71 +1,99 @@
-/* grainc-flags --no-gc */
-
 /**
- * @module Hash: Utilities for hashing any value.
- * @example import Hash from "hash"
+ * Utilities for hashing any value.
+ *
+ * @example from "hash" include Hash
+ *
+ * @example Hash.hash(1)
+ * @example Hash.hash("Hello World")
  *
  * @since v0.1.0
  */
+module Hash
 
 /**
   This module implements MurmurHash3 for Grain data types.
   https://en.wikipedia.org/wiki/MurmurHash
 */
-
-import WasmI32, {
-  add as (+),
-  sub as (-),
-  mul as (*),
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{
+  (+),
+  (-),
+  (*),
   remU as (%),
-  xor as (^),
-  shrU as (>>>),
-  shl as (<<),
-  and as (&),
-  or as (|),
-  eq as (==),
-  ne as (!=),
+  (^),
+  (>>>),
+  (<<),
+  (&),
+  (|),
+  (==),
+  (!=),
   gtU as (>),
-  ltU as (<)
-} from "runtime/unsafe/wasmi32"
-import Tags from "runtime/unsafe/tags"
-import Memory from "runtime/unsafe/memory"
+  ltU as (<),
+}
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/tags" include Tags
 
-import { tagSimpleNumber } from "runtime/dataStructures"
-import { coerceNumberToWasmI32 } from "runtime/numbers"
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ tagSimpleNumber }
+from "runtime/numbers" include Numbers
+use Numbers.{ coerceNumberToWasmI32 }
+from "runtime/bigint" include Bigint as BI
 
-import Random from "sys/random"
-import Result from "result"
+from "wasi/random" include Random
+from "result" include Result
 
-let seed = {
-  Memory.incRef(WasmI32.fromGrain(Random.random))
-  Memory.incRef(WasmI32.fromGrain(Result.unwrap))
+@unsafe
+let mut seed = 0n
+
+@unsafe
+let initalize = () => {
+  // Delay initialization to the first call to `hash` to prevent WASI calls
+  // during startup
   let random = Random.random()
-  Memory.incRef(WasmI32.fromGrain(random))
-  coerceNumberToWasmI32(Result.unwrap(random))
+  seed = coerceNumberToWasmI32(Result.unwrap(random))
+  seed
 }
 
+@unsafe
 let _MAX_HASH_DEPTH = 31n
 
+@unsafe
 let c1 = 0xcc9e2d51n
+@unsafe
 let c2 = 0x1b873593n
+@unsafe
 let r1 = 15n
+@unsafe
 let r2 = 13n
+@unsafe
 let m = 5n
+@unsafe
 let n = 0xe6546b64n
 
+@unsafe
 let mut h = seed
 
-let hash32 = (k) => {
+@unsafe
+let hash32 = k => {
   let mut k = k * c1
   k = WasmI32.rotl(k, r1)
   k *= c2
 
   h = h ^ k
   h = WasmI32.rotl(h, r2)
-  h = (h * m) + n
+  h = h * m + n
 }
 
-let hashRemaining = (r) => {
+@unsafe
+let hash64 = k => {
+  use WasmI64.{ (>>>) }
+  // convenience function for hashing 64-bit values
+  hash32(WasmI32.wrapI64(k))
+  hash32(WasmI32.wrapI64(k >>> 32N))
+}
+
+@unsafe
+let hashRemaining = r => {
   // Note: wasm is little-endian so no swap is necessary
 
   let mut r = r * c1
@@ -75,22 +103,27 @@ let hashRemaining = (r) => {
   h = h ^ r
 }
 
-let finalize = (len) => {
+@unsafe
+let finalize = len => {
   h = h ^ len
 
-  h = h ^ (h >>> 16n)
+  h = h ^ h >>> 16n
   h *= 0x85ebca6bn
-  h = h ^ (h >>> 13n)
+  h = h ^ h >>> 13n
   h *= 0xc2b2ae35n
-  h = h ^ (h >>> 16n)
+  h = h ^ h >>> 16n
 }
 
+@unsafe
 let rec hashOne = (val, depth) => {
   if (depth > _MAX_HASH_DEPTH) {
     void
   } else if ((val & Tags._GRAIN_NUMBER_TAG_MASK) != 0n) {
     hash32(val)
-  } else if ((val & Tags._GRAIN_GENERIC_TAG_MASK) == Tags._GRAIN_GENERIC_HEAP_TAG_TYPE) {
+  } else if (
+    (val & Tags._GRAIN_GENERIC_TAG_MASK) ==
+    Tags._GRAIN_GENERIC_HEAP_TAG_TYPE
+  ) {
     let heapPtr = val
     match (WasmI32.load(heapPtr, 0n)) {
       t when t == Tags._GRAIN_STRING_HEAP_TAG || t == Tags._GRAIN_BYTES_HEAP_TAG => {
@@ -107,22 +140,6 @@ let rec hashOne = (val, depth) => {
         }
         if (rem != 0n) hashRemaining(rem)
         finalize(length)
-      },
-      t when t == Tags._GRAIN_CHAR_HEAP_TAG => {
-        let word = WasmI32.load(heapPtr, 4n)
-        // little-endian byte order
-        let byte = word & 0xFFn
-        let mut shift = 0n
-        if ((byte & 0x80n) == 0x00n) {
-          shift = 24n
-        } else if ((byte & 0xF0n) == 0xF0n) {
-          shift = 0n
-        } else if ((byte & 0xE0n) == 0xE0n) {
-          shift = 8n
-        } else {
-          shift = 16n
-        }
-        hash32(word << shift)
       },
       t when t == Tags._GRAIN_ADT_HEAP_TAG => {
         // moduleId
@@ -178,67 +195,76 @@ let rec hashOne = (val, depth) => {
       t when t == Tags._GRAIN_BOXED_NUM_HEAP_TAG => {
         let tag = WasmI32.load(heapPtr, 4n)
         match (tag) {
-          t when t == Tags._GRAIN_INT32_BOXED_NUM_TAG => {
-            hash32(WasmI32.load(heapPtr, 8n))
-          },
           t when t == Tags._GRAIN_INT64_BOXED_NUM_TAG => {
             hash32(WasmI32.load(heapPtr, 8n))
             hash32(WasmI32.load(heapPtr, 12n))
           },
-          t when t == Tags._GRAIN_FLOAT32_BOXED_NUM_TAG => {
-            hash32(WasmI32.load(heapPtr, 8n))
+          t when t == Tags._GRAIN_BIGINT_BOXED_NUM_TAG => {
+            // TODO(#1187): should include fixint size once implemented
+            let size = BI.getSize(heapPtr)
+            hash32(size)
+            hash32(BI.getFlags(heapPtr))
+            for (let mut i = 0n; i < size; i += 1n) {
+              hash64(BI.getLimb(heapPtr, i))
+            }
           },
           t when t == Tags._GRAIN_FLOAT64_BOXED_NUM_TAG => {
             hash32(WasmI32.load(heapPtr, 8n))
             hash32(WasmI32.load(heapPtr, 12n))
           },
           t when t == Tags._GRAIN_RATIONAL_BOXED_NUM_TAG => {
-            hash32(WasmI32.load(heapPtr, 8n))
-            hash32(WasmI32.load(heapPtr, 12n))
+            hashOne(WasmI32.load(heapPtr, 8n), depth + 1n)
+            hashOne(WasmI32.load(heapPtr, 12n), depth + 1n)
           },
           _ => {
             hash32(heapPtr)
-          }
+          },
         }
+      },
+      t when t == Tags._GRAIN_INT32_HEAP_TAG ||
+        t == Tags._GRAIN_FLOAT32_HEAP_TAG ||
+        t == Tags._GRAIN_UINT32_HEAP_TAG => {
+        hash32(WasmI32.load(heapPtr, 4n))
+      },
+      t when t == Tags._GRAIN_UINT64_HEAP_TAG => {
+        hash32(WasmI32.load(heapPtr, 8n))
+        hash32(WasmI32.load(heapPtr, 12n))
       },
       _ => {
         hash32(heapPtr)
-      }
+      },
     }
-  } else if (val == WasmI32.fromGrain(true)) {
-    hash32(val)
-  } else if (val == WasmI32.fromGrain(false)) {
-    hash32(val)
-  } else if (val == WasmI32.fromGrain(void)) {
-    hash32(val)
   } else {
+    // Handle non-heap values: booleans, chars, void, etc.
     hash32(val)
   }
 }
-/**
- * @section Values: Functions for hashing.
- */
 
 /**
  * A generic hash function that produces an integer from any value. If `a == b` then `Hash.hash(a) == Hash.hash(b)`.
  *
  * @param anything: The value to hash
  * @returns A hash for the given value
+ * 
+ * @throws Failure(String): If WASI random_get fails
+ *
+ * @example assert Hash.hash(1) == Hash.hash(1)
+ * @example assert Hash.hash("Hello World") == Hash.hash("Hello World")
  *
  * @since v0.1.0
  */
-export let rec hash = (anything) => {
-  h = seed
+@unsafe
+provide let hash = anything => {
+  h = if (WasmI32.eqz(seed)) {
+    initalize()
+  } else {
+    seed
+  }
 
   hashOne(WasmI32.fromGrain(anything), 0n)
   finalize(0n)
 
   // Tag the number on the way out.
   // Since Grain has proper modulus, negative numbers are okay.
-  let result = tagSimpleNumber(h)
-
-  Memory.decRef(WasmI32.fromGrain(hash))
-  Memory.decRef(WasmI32.fromGrain(anything))
-
-  result
+  tagSimpleNumber(h)
 }

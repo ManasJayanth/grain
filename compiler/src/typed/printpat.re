@@ -29,19 +29,29 @@ let pretty_const = c =>
   switch (c) {
   | Const_number(Const_number_int(i)) => Printf.sprintf("%Ld", i)
   | Const_number(Const_number_float(f)) => Printf.sprintf("%f", f)
-  | Const_number(Const_number_rational(n, d)) =>
-    Printf.sprintf("%ld/%ld", n, d)
+  | Const_number(Const_number_rational({rational_num_rep, rational_den_rep})) =>
+    Printf.sprintf("%s/%s", rational_num_rep, rational_den_rep)
+  | Const_number(Const_number_bigint({bigint_rep})) => bigint_rep
   | Const_bytes(b) => Printf.sprintf("%S", Bytes.to_string(b))
   | Const_string(s) => Printf.sprintf("%S", s)
   | Const_char(c) => Printf.sprintf("%S", c)
   | Const_float64(f)
   | Const_float32(f) => Printf.sprintf("%f", f)
+  | Const_int8(i) => Printf.sprintf("%lds", i)
+  | Const_int16(i) => Printf.sprintf("%ldS", i)
   | Const_int32(i) => Printf.sprintf("%ldl", i)
   | Const_int64(i) => Printf.sprintf("%LdL", i)
+  | Const_uint8(i) => Printf.sprintf("%luus", i)
+  | Const_uint16(i) => Printf.sprintf("%luuS", i)
+  | Const_uint32(i) => Printf.sprintf("%luul", i)
+  | Const_uint64(i) => Printf.sprintf("%LuuL", i)
   | Const_wasmi32(i) => Printf.sprintf("%ldn", i)
   | Const_wasmi64(i) => Printf.sprintf("%LdN", i)
   | Const_wasmf32(f) => Printf.sprintf("%fw", f)
   | Const_wasmf64(f) => Printf.sprintf("%fW", f)
+  | Const_bigint({bigint_rep}) => bigint_rep
+  | Const_rational({rational_num_rep, rational_den_rep}) =>
+    Printf.sprintf("%s/%sr", rational_num_rep, rational_den_rep)
   | Const_bool(true) => "true"
   | Const_bool(false) => "false"
   | Const_void => "void"

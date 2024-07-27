@@ -5,16 +5,19 @@ open Grain_utils;
 let {describe} =
   describeConfig |> withCustomMatchers(customMatchers) |> build;
 
-describe("pattern matching", ({test}) => {
+describe("pattern matching", ({test, testSkip}) => {
+  let test_or_skip =
+    Sys.backend_type == Other("js_of_ocaml") ? testSkip : test;
+
   let assertSnapshot = makeSnapshotRunner(test);
   let assertCompileError = makeCompileErrorRunner(test);
-  let assertRun = makeRunner(test);
-  let assertFileRun = makeFileRunner(test);
+  let assertRun = makeRunner(test_or_skip);
+  let assertFileRun = makeFileRunner(test_or_skip);
   let assertWarning = makeWarningRunner(test);
   let assertNoWarning = makeNoWarningRunner(test);
 
   /* Pattern matching on tuples */
-  assertRun("tuple_match_1", "print(match ((1,)) { (a,) => a })", "1\n");
+  assertRun("tuple_match_1", "print(match ((1, 2)) { (a, _) => a })", "1\n");
   assertRun(
     "tuple_match_2",
     "print(match ((1, 2, 3)) { (a, b, c) => a + b + c })",
@@ -212,6 +215,51 @@ describe("pattern matching", ({test}) => {
     "constant_match_4",
     "match ((\"foo\", 5)) { (\"foo\", n) when n == 7 => false, (\"foo\", 9) when true => false, (\"foo\", n) when n == 5 => true, _ => false }",
   );
+  // Constant low level wasm type patterns
+  assertSnapshot(
+    "low_level_constant_match_1",
+    "@unsafe let _ = print(match (1n) { 0n => false, 1n => true, 2n => false, _ => false} )",
+  );
+  assertSnapshot(
+    "low_level_constant_match_2",
+    "@unsafe let _ = print(match (1N) { 0N => false, 1N => true, 2N => false, _ => false} )",
+  );
+  assertSnapshot(
+    "low_level_constant_match_3",
+    "@unsafe let _ = print(match (1.0w) { 0.0w => false, 1.0w => true, 2.0w => false, _ => false} )",
+  );
+  assertSnapshot(
+    "low_level_constant_match_4",
+    "@unsafe let _ = print(match (1.0W) { 0.0W => false, 1.0W => true, 2.0W => false, _ => false} )",
+  );
+  // Or patterns
+  assertSnapshot("or_match_1", "match (true) { true | false => 3 }");
+  assertSnapshot(
+    "or_match_2",
+    "match (Some(5)) { Some(3 | 4) => false, Some(5) | None => true, _ => false }",
+  );
+  assertSnapshot(
+    "or_match_3",
+    "match ([5]) { [a, _] | [_, a, _] | [a] => true, _ => false }",
+  );
+  assertSnapshot("or_match_4", {|match (true) { true
+  | false => 3 }|});
+  // Aliases
+  assertSnapshot("alias_match_1", "match (true) { _ as p => p }");
+  assertSnapshot("alias_match_2", "match (true) { a as b => a && b }");
+  assertRun(
+    "alias_match_3",
+    "match (true) { true | false as p => print(p) }",
+    "true\n",
+  );
+  assertSnapshot(
+    "alias_match_4",
+    "match (Some(5)) { Some(3 | 4 as a) => a, Some(_) | None => 5, _ => 6 }",
+  );
+  assertSnapshot(
+    "alias_match_5",
+    "match (Some(5)) { Some(3 | 4) as a => a, Some(5) | None as a => a, _ => None }",
+  );
   assertFileRun("mixed_matching", "mixedPatternMatching", "true\n");
   assertWarning(
     "bool_exhaustiveness1",
@@ -267,5 +315,168 @@ describe("pattern matching", ({test}) => {
     Warnings.PartialMatch(
       "true\n(However, some guarded clause may match this value.)",
     ),
+  );
+  assertWarning(
+    "let_exhaustiveness",
+    "let a = None\nlet Some(b) = a",
+    Warnings.PartialMatch("None"),
+  );
+  assertCompileError(
+    "newline_before_arrow",
+    {|
+      match (1) {
+        a
+          => a
+      }
+    |},
+    "Expected `=>` followed by an expression or a branch guard—the keyword `when` followed by an expression",
+  );
+  assertCompileError(
+    "newline_before_arrow_2",
+    {|
+      match (1) {
+        a when a = 1
+          => a
+      }
+    |},
+    "Expected `=>` followed by an expression.",
+  );
+
+  // destructuring
+  assertRun(
+    "destructure_constant",
+    {|
+      let 1 | _ = 5
+      print("ok")
+    |},
+    "ok\n",
+  );
+  assertRun(
+    "destructure_singleton_adt",
+    {|
+      enum NumWrapper { NumWrapper(Number) }
+      let NumWrapper(a) = NumWrapper(5)
+      print(a)
+    |},
+    "5\n",
+  );
+  assertRun(
+    "destructure_adt",
+    {|
+      enum Foo { A(Number), B(Number) }
+      let A(val1) | B(val1) = A(5)
+      let A(val2) | B(val2) = B(6)
+      print(val1)
+      print(val2)
+    |},
+    "5\n6\n",
+  );
+  assertRun(
+    "destructure_tuple",
+    {|
+      let (a, b) = (3, 4)
+      print(a + b)
+    |},
+    "7\n",
+  );
+  assertRun(
+    "destructure_mut_tuple",
+    {|
+      let run = () => {
+        let mut (a, b) = (1, 2)
+
+        print(b)
+      }
+
+      run()
+    |},
+    "2\n",
+  );
+  assertRun(
+    "destructure_mut_tuple_closure",
+    {|
+      let run = () => {
+        let mut (a, b) = (1, 2)
+
+        print(b)
+
+        () => b
+      }
+
+      run()
+    |},
+    "2\n",
+  );
+  assertRun(
+    "destructure_record",
+    {|
+      record Rec { a: Number, b: Number }
+      let {a, b} = { a: 3, b: 4 }
+      print(a + b)
+    |},
+    "7\n",
+  );
+
+  // inline record constructors
+  assertRun(
+    "inline_rec_pattern_1",
+    {|
+      enum E {
+        Tup(String, Number),
+        Rec { x: Number, y: String }
+      }
+      let a = Rec { x: 123, y: "abc" }
+      match (a) {
+        Rec { y, x } => print(x),
+        _ => fail ""
+      }
+      match (a) {
+        Rec { y, _ } | Tup(y, _) => print(y),
+        _ => fail ""
+      }
+      match (a) {
+        Rec { _ } => print("record"),
+        _ => fail ""
+      }
+    |},
+    "123\nabc\nrecord\n",
+  );
+  assertRun(
+    "inline_rec_pattern_2",
+    {|
+      enum E {
+        Rec { x: Number, y: String }
+      }
+      let a = Rec { x: 123, y: "abc" }
+      let Rec { y, _ } = a
+      print(y)
+    |},
+    "abc\n",
+  );
+  assertCompileError(
+    "inline_rec_pattern_3",
+    {|
+      enum E {
+        T(Number),
+        R { x: Number }
+      }
+      match (T(1)) {
+        T { _ } => print("success"),
+        _ => fail ""
+      }
+    |},
+    "T is a tuple constructor but a record constructor pattern was given.",
+  );
+  assertCompileError(
+    "inline_rec_pattern_4",
+    {|
+      enum Rec {
+        Rec { x: Number }
+      }
+      match (Rec { x: 1 }) {
+        Rec(y) => print("success")
+      }
+    |},
+    "Rec is a record constructor but a tuple constructor pattern was given.",
   );
 });

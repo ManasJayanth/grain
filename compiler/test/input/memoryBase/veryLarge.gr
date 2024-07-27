@@ -1,0 +1,7 @@
+module VeryLarge
+
+enum Thing {
+  HelloWorld,
+}
+
+print(HelloWorld)

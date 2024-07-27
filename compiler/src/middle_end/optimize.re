@@ -1,10 +1,13 @@
 open Anftree;
 
 let analysis_passes = [
+  Analyze_globals.analyze,
+  Analyze_function_calls.analyze,
   Analyze_manual_memory_management.analyze,
   Analyze_purity.analyze,
   Analyze_tail_calls.analyze,
   Analyze_inline_wasm.analyze,
+  Analyze_free_vars.analyze,
   Analyze_closure_scoped_vars.analyze,
   Analyze_mutable_vars.analyze,
 ];
@@ -13,7 +16,7 @@ let optimization_passes = [
   Optimize_manual_memory_management.optimize,
   Optimize_tail_calls.optimize,
   Optimize_constants.optimize,
-  Optimize_simple_binops.optimize,
+  Optimize_simple_expressions.optimize,
   Optimize_dead_assignments.optimize,
   Optimize_dead_branches.optimize,
   Optimize_dead_statements.optimize,
@@ -50,11 +53,11 @@ let optimize_program = (prog: Anftree.anf_program): Anftree.anf_program => {
     if (n <= 0) {
       prog;
     } else {
-      analyze(prog);
-      let opt = clear_analyses(run_optimization_pass(prog));
+      analyze(clear_analyses(prog));
+      let opt = run_optimization_pass(prog);
       pass(n - 1, opt);
     };
 
-  /* TODO: Make 4 a config value */
+  // TODO: Make 4 a config value
   pass(4, prog);
 };

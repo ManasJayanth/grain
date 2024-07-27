@@ -106,7 +106,7 @@ module Make = (DV: Dependency_value) => {
     do_register(dependency);
   };
 
-  let solve_next_out_of_date = (~stop: option(DV.t)) => {
+  let solve_next_out_of_date = (~stop=?, ()) => {
     let (stop_found, ret) =
       G_topological.fold(
         ((dep, state), acc) => {
@@ -133,16 +133,22 @@ module Make = (DV: Dependency_value) => {
     ret;
   };
 
-  let compile_dependencies = (~loc=?, filename) => {
-    switch (lookup_filename(filename)) {
-    | None => raise(Not_found)
-    | Some(vtx) =>
-      let to_compile = ref(solve_next_out_of_date(Some(vtx)));
-      while (Option.is_some(to_compile^)) {
-        DV.compile_module(~loc?, Option.get(to_compile^));
-        to_compile := solve_next_out_of_date(Some(vtx));
-      };
+  let compile_graph = () => {
+    let to_compile = ref(solve_next_out_of_date());
+    while (Option.is_some(to_compile^)) {
+      DV.compile_module(Option.get(to_compile^));
+      to_compile := solve_next_out_of_date();
     };
+  };
+
+  let get_dependencies = () => {
+    List.rev(
+      G_topological.fold(
+        ((v1, _), acc) => [DV.get_filename(v1), ...acc],
+        graph,
+        [],
+      ),
+    );
   };
 
   let dump = () => {

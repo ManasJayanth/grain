@@ -1,0 +1,9 @@
+module RelativeIncludeLinking
+
+from "./relativeIncludeLinking/a.gr" include A
+from "./relativeIncludeLinking/mutExport.gr" include MutExport
+
+MutExport.x := unbox(MutExport.x) + 1
+
+print(A.readX())
+print(unbox(MutExport.x))

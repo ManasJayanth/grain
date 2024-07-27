@@ -1,0 +1,5 @@
+module Main
+
+from "./broken.gr" include Broken
+
+print(Broken.min(2, 3))

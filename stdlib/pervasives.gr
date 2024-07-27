@@ -1,12 +1,24 @@
-export *
+/**
+ * This module is automatically imported into every Grain program. You can think of it as the global environment. Although it is automatically imported, it can still be imported manually.
+ *
+ * @example from "pervasives" include Pervasives
+ *
+ * @since v0.1.0
+ */
+@noPervasives
+module Pervasives
 
-import Exception from "runtime/exception"
-import Memory from "runtime/unsafe/memory"
-import WasmI32 from "runtime/unsafe/wasmi32"
+from "runtime/exception" include Exception
+from "runtime/unsafe/memory" include Memory
+from "runtime/unsafe/wasmi32" include WasmI32
 
-import { equal as (==) } from "runtime/equal"
+from "runtime/equal" include Equal
+use Equal.{ equal as (==) }
+from "runtime/compare" include Compare
+use Compare.{ compare }
 
-import {
+from "runtime/numbers" include Numbers
+use Numbers.{
   incr,
   decr,
   (+),
@@ -14,6 +26,7 @@ import {
   (*),
   (/),
   (%),
+  (**),
   (<),
   (>),
   (<=),
@@ -24,110 +37,218 @@ import {
   (^),
   (<<),
   (>>>),
-  (>>)
-} from "runtime/numbers"
+  (>>),
+}
+from "runtime/string" include String
+use String.{ toString, print, concat as (++) }
 
-// Math operations
-export incr
-export decr
-export (+)
-export (-)
-export (*)
-export (/)
-export (%)
+/**
+ * Computes the logical NOT (`!`) of the given operand.
+ * Inverts the given Boolean value.
+ *
+ * @param bool: The operand
+ * @returns The inverted value
+ *
+ * @example !true // false
+ * @example !false // true
+ *
+ * @since v0.1.0
+ */
+provide primitive (!) = "@not"
 
-// Number comparisons
-export (<)
-export (>)
-export (<=)
-export (>=)
+/**
+ * Computes the logical AND (`&&`) of the given operands.
+ *
+ * If the first operand is `false`, returns `false` without evaluating the second operand.
+ * If the first operand is `true`, returns the value of the second operand.
+ *
+ * @param left: The first operand
+ * @param right: The second operand
+ * @returns The first operand if it is `false` or the value of the second operand otherwise
+ *
+ * @since v0.1.0
+ */
+provide primitive (&&) = "@and"
 
-// Number bit/logical operations
-export lnot
+/**
+ * Computes the logical OR `||` of the given operands.
+ *
+ * If the first operand is `true`, returns `true` without evaluating the second operand.
+ * If the first operand is `false`, returns the value of the second operand.
+ *
+ * @param left: The first operand
+ * @param right: The second operand
+ * @returns The first operand if it is `true` or the value of the second operand otherwise
+ *
+ * @since v0.1.0
+ */
+provide primitive (||) = "@or"
 
-export (&)
-export (|)
-export (^)
+provide { (==) }
 
-export (<<)
-export (>>>)
-export (>>)
+/**
+ * Check that two values are **not** equal. This checks for structural equality,
+ * so it also works for comparing things like tuples and lists.
+ *
+ * @param value1: The first operand
+ * @param value2: The second operand
+ * @returns `false` if the values are structurally equal or `true` otherwise
+ *
+ * @since v0.2.0
+ */
+provide let (!=) = (value1, value2) => !(value1 == value2)
 
+/**
+ * Checks that two values are physically equal.
+ * Use this operator if you don’t need or want structural equality.
+ *
+ * @param left: The first operand
+ * @param right: The second operand
+ * @returns `true` if the values are physically equal or `false` otherwise
+ *
+ * @since v0.1.0
+ */
+provide primitive (is) = "@is"
+
+/**
+ * Checks that two values are **not** physically equal.
+ * Use this operator if you don’t need or want structural equality.
+ *
+ * @param value1: The first operand
+ * @param value2: The second operand
+ * @returns `false` if the values are physically equal or `true` otherwise
+ *
+ * @since v0.2.0
+ */
+provide let (isnt) = (value1, value2) => !(value1 is value2)
+
+provide {
+  (<),
+  (>),
+  (<=),
+  (>=),
+  compare,
+  (+),
+  (-),
+  (*),
+  (/),
+  (%),
+  (**),
+  incr,
+  decr,
+  (++),
+  lnot,
+  (&),
+  (|),
+  (^),
+  (<<),
+  (>>>),
+  (>>),
+}
 
 // Number coercions & conversions
 
-// [TODO] (#311) Commented until we nail down semantics
-// import foreign wasm convertExactToInexact : Number -> Number as inexact from "stdlib-external/runtime"
-// import foreign wasm convertInexactToExact : Number -> Number as exact from "stdlib-external/runtime"
+// TODO(#311): Commented until we nail down semantics
+// foreign wasm convertExactToInexact : Number => Number as inexact from "stdlib-external/runtime"
+// foreign wasm convertInexactToExact : Number => Number as exact from "stdlib-external/runtime"
 
-// Boolean operations
-primitive (!) : Bool -> Bool = "@not"
-primitive (&&) : (Bool, Bool) -> Bool = "@and"
-primitive (||) : (Bool, Bool) -> Bool = "@or"
-
-// Box operations
-primitive box : a -> Box<a> = "@box"
-primitive unbox : Box<a> -> a = "@unbox"
-
-// Exceptions
-exception Failure(String)
-exception InvalidArgument(String)
-
-// Other operations
-primitive ignore : a -> Void = "@ignore"
-primitive assert : Bool -> Void = "@assert"
-primitive throw : Exception -> a = "@throw"
-let fail : String -> a = msg => throw Failure(msg)
-
-import { toString, print, concat as (++) } from "runtime/string"
-
-// Converts the given value to a string
-export toString
-// Prints the given value to the console.
-export print
-
-// String operations
-export (++)
-
-// Checks the given items for structural equality.
-export (==)
-let (!=) : (a, a) -> Bool = (x, y) => !(x == y)
-// Checks the given items for physical equality.
-primitive (is) : (a, a) -> Bool = "@is"
-// The opposite of is operator
-let (isnt) : (a, a) -> Bool = (x, y) => !(x is y)
-
-export enum List<a> { [], [...](a, List<a>) }
+provide { toString, print }
 
 /**
- * @deprecated This will be removed in a future release of Grain.
+ * Accepts any value and always returns `void`.
+ *
+ * @param value: The value to ignore
+ *
+ * @since v0.1.0
  */
-let cons = (a, b) => [a, ...b] // <- workaround for (grain-lang/grain#802) [TODO] fix #802 and delete
-let empty = [] // <- for parity with `cons`, but should be deleted as well
+provide primitive ignore = "@ignore"
 
-// Maybe some data, maybe not!
-enum Option<a> { Some(a), None }
+/**
+ * Assert that the given Boolean condition is `true`.
+ *
+ * @param condition: The condition to assert
+ *
+ * @throws AssertionError: When the `condition` is false
+ *
+ * @example assert 3 > 2
+ * @example assert true
+ *
+ * @since v0.1.0
+ */
+provide primitive assert = "@assert"
 
-// Maybe some data, maybe an error!
-enum Result<t, e> { Ok(t), Err(e) }
+// Exceptions
+provide exception Failure(String)
+provide exception InvalidArgument(String)
 
-// Identity function
-let identity = (x) => x
+/**
+ * Throw an exception. Currently, exceptions cannot be caught and will crash your program.
+ *
+ * @param exn: The exception to be thrown
+ * @returns Anything and nothing—your program won't continue past a throw
+ *
+ * @since v0.3.0
+ */
+provide primitive throw = "@throw"
+
+/**
+ * Unconditionally throw a `Failure` exception with a message.
+ * Currently, Exceptions cannot be caught and will crash your program.
+ *
+ * @param message: The reason for the failure
+ * @returns Anything and nothing—your program won't continue past a fail expression
+ */
+provide let fail = message => throw Failure(message)
+
+/**
+ * Provides the operand untouched.
+ *
+ * @param value: The value to return
+ * @returns The value untouched
+ *
+ * @since v0.2.0
+ */
+provide let identity = value => value
+
+/**
+ * Creates a box containing the given initial value.
+ * Values inside a box can be swapped out with the `:=` operator.
+ * Generally, `let mut` expressions are preferable to using a Box.
+ *
+ * @param value: The initial value inside the box
+ * @returns The box containing the initial value
+ *
+ * @since v0.1.0
+ */
+provide primitive box = "@box"
+
+/**
+ * Retrieves the current value from a box.
+ *
+ * @param value: The box to unwrap
+ * @returns The value inside the box
+ *
+ * @since v0.1.0
+ */
+provide primitive unbox = "@unbox"
 
 // Setup exception printing
-@disableGC
-let rec setupExceptions = () => {
+primitive elideTypeInfo = "@meta.elide_type_info"
+@unsafe
+let setupExceptions = () => {
   Exception.dangerouslyRegisterPrinter(e => {
     match (e) {
       Failure(msg) => Some("Failure: " ++ msg),
       InvalidArgument(msg) => Some("Invalid argument: " ++ msg),
-      _ => None
+      _ => None,
     }
   })
 
-  Exception.dangerouslyRegisterBasePrinter(e => Some(toString(e)))
-  Memory.decRef(WasmI32.fromGrain(setupExceptions))
-  void
+  // If type information is elided, remove dependency on toString as
+  // it will have no effect on exceptions
+  if (!elideTypeInfo) {
+    Exception.dangerouslyRegisterBasePrinter(e => Some(toString(e)))
+  }
 }
 
 setupExceptions()

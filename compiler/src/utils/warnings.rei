@@ -20,6 +20,20 @@ type loc = {
   loc_ghost: bool,
 };
 
+type number_type =
+  | Int8
+  | Int16
+  | Int32
+  | Int64
+  | Uint8
+  | Uint16
+  | Uint32
+  | Uint64
+  | Float32
+  | Float64
+  | Rational
+  | BigInt;
+
 type t =
   | LetRecNonFunction(string)
   | AmbiguousName(list(string), list(string), bool)
@@ -37,7 +51,12 @@ type t =
   | UnreachableCase
   | ShadowConstructor(string)
   | NoCmiFile(string, option(string))
-  | FuncWasmUnsafe(string);
+  | FuncWasmUnsafe(string, string, string)
+  | FromNumberLiteral(number_type, string, string)
+  | UselessRecordSpread
+  | PrintUnsafe(string)
+  | ToStringUnsafe(string)
+  | ArrayIndexNonInteger(string);
 
 let is_active: t => bool;
 let is_error: t => bool;

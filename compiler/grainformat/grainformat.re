@@ -3,72 +3,43 @@ open Grain;
 open Compile;
 open Grain_parsing;
 open Grain_utils;
-open Filename;
+open Grain_formatting;
+open Grain_utils.Filepath.Args;
 
-let compile_parsed = (filename: option(string)) => {
-  let program_str = ref("");
-  let linesList = ref([]);
+[@deriving cmdliner]
+type io_params = {
+  /** Grain source file or directory of source files to format */
+  [@pos 0] [@docv "FILE"]
+  input: ExistingFileOrDirectory.t,
+  /** Output file or directory */
+  [@name "o"] [@docv "FILE"]
+  output: option(MaybeExistingFileOrDirectory.t),
+};
 
-  switch (
-    switch (filename) {
-    | None =>
-      // force from stdin for now
+let get_program_string = filename => {
+  let ic = open_in_bin(filename);
+  let n = in_channel_length(ic);
+  let source_buffer = Buffer.create(n);
+  Buffer.add_channel(source_buffer, ic, n);
+  close_in(ic);
+  Buffer.contents(source_buffer);
+};
 
-      /* read from stdin until we get end of buffer */
-      try(
-        while (true) {
-          let line = read_line();
-          linesList := linesList^ @ [line];
-        }
-      ) {
-      | exn => ()
-      };
-
-      program_str := String.concat("\n", linesList^);
-
-      Compile.compile_string(~hook=stop_after_parse, ~name="", program_str^);
-    | Some(filenm) =>
-      // need to read the source file in case we want to use the content
-      // for formatter-ignore or decision making
-      program_str := "";
-
-      let ic = open_in(filenm);
-
-      try(
-        while (true) {
-          let line = input_line(ic);
-
-          linesList := linesList^ @ [line];
-        }
-      ) {
-      | exn => ()
-      };
-
-      program_str := String.concat("\n", linesList^);
-
-      // add a new line to the end for where it's in CRLF more
-      // TODO(#940): Handle CRLF properly
-      program_str := program_str^ ++ "\n";
-
-      Grain_utils.Config.base_path := dirname(filenm);
-      Compile.compile_string(
-        ~hook=stop_after_parse,
-        ~name=filenm,
-        program_str^,
-      );
-    }
-  ) {
-  | exception exn =>
+let compile_parsed = filename => {
+  let filename = Filepath.to_string(filename);
+  let program_str = get_program_string(filename);
+  switch (Fmt.parse_source(program_str)) {
+  | Error(ParseError(exn)) =>
     let bt =
       if (Printexc.backtrace_status()) {
         Some(Printexc.get_backtrace());
       } else {
         None;
       };
-    Grain_parsing.Location.report_exception(Format.err_formatter, exn);
+    Grain_parsing.Location.report_exception(Stdlib.Format.err_formatter, exn);
     Option.iter(
       s =>
-        if (Grain_utils.Config.debug^) {
+        if (Config.debug^) {
           prerr_string("Backtrace:\n");
           prerr_string(s);
           prerr_string("\n");
@@ -76,132 +47,134 @@ let compile_parsed = (filename: option(string)) => {
       bt,
     );
     exit(2);
-  | {cstate_desc: Parsed(parsed_program)} =>
-    `Ok((parsed_program, Array.of_list(linesList^)))
-  | _ => `Error((false, "Invalid compilation state"))
+  | Ok((parsed_program, lines, eol)) => (parsed_program, lines, eol)
+  | Error(InvalidCompilationState) => failwith("Invalid compilation state")
   };
 };
 
 let format_code =
     (
-      srcfile: option(string),
+      ~eol,
+      ~output=?,
+      ~source: array(string),
       program: Parsetree.parsed_program,
-      outfile,
-      original_source: array(string),
-      format_in_place: bool,
     ) => {
-  let reformatted_code = Reformat.reformat_ast(program, original_source);
-
-  let buf = Buffer.create(0);
-  Buffer.add_string(buf, reformatted_code);
-
-  let contents = Buffer.to_bytes(buf);
-  switch (outfile) {
+  switch (output) {
   | Some(outfile) =>
+    let outfile = Filepath.to_string(outfile);
+    // TODO: This crashes if you do something weird like `-o stdout/map.gr/foo`
+    // because `foo` doesn't exist so it tries to mkdir it and raises
+    Fs_access.ensure_parent_directory_exists(outfile);
     let oc = Fs_access.open_file_for_writing(outfile);
-    output_bytes(oc, contents);
+    set_binary_mode_out(oc, true);
+    Grain_formatting.Fmt.format(
+      ~write=output_string(oc),
+      ~source,
+      ~eol,
+      program,
+    );
     close_out(oc);
   | None =>
-    switch (srcfile, format_in_place) {
-    | (Some(src), true) =>
-      let oc = Fs_access.open_file_for_writing(src);
-      output_bytes(oc, contents);
-      close_out(oc);
-    | _ => print_bytes(contents)
-    }
+    set_binary_mode_out(stdout, true);
+    Grain_formatting.Fmt.format(~write=print_string, ~source, ~eol, program);
+    flush(stdout);
   };
-
-  `Ok();
 };
 
-let grainformat =
-    (
-      srcfile: option(string),
-      outfile,
-      format_in_place: bool,
-      (program, source: array(string)),
-    ) =>
-  try(format_code(srcfile, program, outfile, source, format_in_place)) {
-  | e => `Error((false, Printexc.to_string(e)))
-  };
+type run = {
+  input_path: Fp.t(Fp.absolute),
+  output_path: option(Fp.t(Fp.absolute)),
+};
 
-let input_file_conv = {
-  open Arg;
-  let (prsr, prntr) = non_dir_file;
-  (
-    filename => prsr(Grain_utils.Files.normalize_separators(filename)),
-    prntr,
+let enumerate_directory = (input_dir_path, output_dir_path) => {
+  let all_files = Array.to_list(Fs_access.readdir(input_dir_path));
+  let grain_files =
+    List.filter(
+      filepath => Filename.extension(Fp.toString(filepath)) == ".gr",
+      all_files,
+    );
+  List.map(
+    filepath => {
+      // We relativize between the input directory and the full filepath
+      // such that we can reconstruct the directory structure of the input directory
+      let relative_path =
+        Fp.relativizeExn(~source=input_dir_path, ~dest=filepath);
+      let gr_basename = Option.get(Fp.baseName(relative_path));
+      let dirname = Fp.dirName(relative_path);
+      let md_relative_path = Fp.join(dirname, Fp.relativeExn(gr_basename));
+      let output_path = Fp.join(output_dir_path, md_relative_path);
+      {input_path: filepath, output_path: Some(output_path)};
+    },
+    grain_files,
   );
 };
 
-/** Converter which checks that the given output filename is valid */
-let output_file_conv = {
-  let parse = s => {
-    let s_dir = dirname(s);
-    Sys.file_exists(s_dir)
-      ? if (Sys.is_directory(s_dir)) {
-          `Ok(s);
-        } else {
-          `Error(Format.sprintf("`%s' is not a directory", s_dir));
-        }
-      : `Error(Format.sprintf("no `%s' directory", s_dir));
+let enumerate_runs = opts =>
+  switch (opts.input, opts.output) {
+  | (File(input_file_path), None) =>
+    `Ok([{input_path: input_file_path, output_path: None}])
+  | (File(input_file_path), Some(Exists(File(output_file_path)))) =>
+    `Ok([
+      {input_path: input_file_path, output_path: Some(output_file_path)},
+    ])
+  | (File(input_file_path), Some(NotExists(output_file_path))) =>
+    `Ok([
+      {input_path: input_file_path, output_path: Some(output_file_path)},
+    ])
+  | (Directory(_), None) =>
+    `Error((
+      false,
+      "Directory input must be used with `-o` flag to specify output directory",
+    ))
+  | (Directory(input_dir_path), Some(Exists(Directory(output_dir_path)))) =>
+    `Ok(enumerate_directory(input_dir_path, output_dir_path))
+  | (Directory(input_dir_path), Some(NotExists(output_dir_path))) =>
+    `Ok(enumerate_directory(input_dir_path, output_dir_path))
+  | (File(input_file_path), Some(Exists(Directory(output_dir_path)))) =>
+    `Error((
+      false,
+      "Using a file as input cannot be combined with directory output",
+    ))
+  | (Directory(_), Some(Exists(File(_)))) =>
+    `Error((
+      false,
+      "Using a directory as input cannot be written as a single file output",
+    ))
   };
-  (parse, Format.pp_print_string);
-};
 
-let output_filename = {
-  let doc = "Output filename";
-  let docv = "FILE";
-  Arg.(
-    value & opt(some(output_file_conv), None) & info(["o"], ~docv, ~doc)
-  );
-};
-
-let format_in_place = {
-  let doc = "Format in place";
-  let docv = "";
-  Arg.(value & flag & info(["in-place"], ~docv, ~doc));
-};
-
-let input_filename = {
-  let doc = "Grain source file to format";
-  let docv = "FILE";
-  Arg.(
-    value
-    & pos(~rev=true, 0, some(~none="", input_file_conv), None)
-    & info([], ~docv, ~doc)
+let grainformat = runs => {
+  List.iter(
+    ({input_path, output_path}) => {
+      let (program, source, eol) = compile_parsed(input_path);
+      try(format_code(~eol, ~output=?output_path, ~source, program)) {
+      | exn =>
+        Stdlib.Format.eprintf("@[%s@]@.", Printexc.to_string(exn));
+        exit(2);
+      };
+    },
+    runs,
   );
 };
 
 let cmd = {
   open Term;
 
-  let doc = "Reformat Grain source";
+  let doc = "Format Grain source";
   let version =
     switch (Build_info.V1.version()) {
     | None => "unknown"
     | Some(v) => Build_info.V1.Version.to_string(v)
     };
 
-  (
-    Term.(
-      ret(
-        const(grainformat)
-        $ input_filename
-        $ output_filename
-        $ format_in_place
-        $ ret(
-            Grain_utils.Config.with_cli_options(compile_parsed)
-            $ input_filename,
-          ),
-      )
-    ),
-    Term.info(Sys.argv[0], ~version, ~doc),
+  Cmd.v(
+    Cmd.info(Sys.argv[0], ~version, ~doc),
+    Config.with_cli_options(grainformat)
+    $ ret(const(enumerate_runs) $ io_params_cmdliner_term()),
   );
 };
 
 let () =
-  switch (Term.eval(cmd)) {
-  | `Error(_) => exit(1)
-  | _ => exit(0)
+  switch (Cmd.eval_value(cmd)) {
+  | Error(_) => exit(1)
+  | _ => ()
   };

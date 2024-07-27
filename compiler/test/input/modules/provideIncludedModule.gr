@@ -1,0 +1,15 @@
+module ProvideIncludedModule
+
+from "option" include Option
+from "array" include Array
+
+provide { module Option as Smoption }
+
+module Qux {
+  provide let val = 9
+  provide module Quux {
+    provide { module Array }
+  }
+}
+
+provide { module Qux }

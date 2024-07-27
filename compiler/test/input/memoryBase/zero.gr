@@ -1,0 +1,7 @@
+module Zero
+
+enum Thing {
+  HelloWorld,
+}
+
+print(HelloWorld)

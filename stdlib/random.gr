@@ -1,0 +1,188 @@
+/**
+ * Pseudo-random number generation.
+ *
+ * @example from "random" include Random
+ *
+ * @since v0.5.0
+ */
+module Random
+
+from "wasi/random" include Random as WasiRandom
+from "result" include Result
+from "uint32" include Uint32
+from "uint64" include Uint64
+from "runtime/unsafe/wasmi32" include WasmI32
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/memory" include Memory
+from "runtime/dataStructures" include DataStructures as DS
+
+abstract record Random {
+  seed: Uint64,
+  mut counter: Uint64,
+  mut initialized: Bool,
+}
+
+let incCounter = random => {
+  random.counter = Uint64.incr(random.counter)
+}
+
+// https://arxiv.org/pdf/2004.06278v3.pdf
+@unsafe
+let squares = (ctr: Uint64, key: Uint64) => {
+  use WasmI64.{ (+), (*), (|), (<<), (>>>) }
+  // Implemented with @unsafe to boost efficiency
+  // and have fine-grained control over overflow semantics
+  let ctr = WasmI64.load(WasmI32.fromGrain(ctr), 8n)
+  let key = WasmI64.load(WasmI32.fromGrain(key), 8n)
+  let mut x = ctr * key
+  let mut y = x
+  let mut z = y + key
+  // round 1
+  x = x * x + y
+  x = x >>> 32N | x << 32N
+  // round 2
+  x = x * x + z
+  x = x >>> 32N | x << 32N
+  // round 3
+  x = x * x + y
+  x = x >>> 32N | x << 32N
+  let ret = WasmI32.wrapI64((x * x + z) >>> 32N)
+  WasmI32.toGrain(DS.newUint32(ret)): Uint32
+}
+
+/**
+ * Creates a new pseudo-random number generator with the given seed.
+ *
+ * @param seed: The seed for the pseudo-random number generator
+ * @returns The pseudo-random number generator
+ *
+ * @since v0.5.0
+ */
+provide let make = seed => {
+  { seed, counter: 0uL, initialized: false }
+}
+
+/**
+ * Creates a new pseudo-random number generator with a random seed.
+ *
+ * @returns `Ok(generator)` of a pseudo-random number generator if successful or `Err(exception)` otherwise
+ *
+ * @since v0.5.0
+ */
+provide let makeUnseeded = () => {
+  // TODO: Should we just .expect this result for UX's sake?
+  Result.map(seed => {
+    { seed, counter: 0uL, initialized: false }
+  }, WasiRandom.randomUint64())
+}
+
+/**
+ * [Internal note]
+ * For low seed numbers, we sometimes need to churn through
+ * some iterations to start getting interesting numbers. Taking
+ * a cue from the API in https://pypi.org/project/squares-rng/ ,
+ * we churn through until we generate an int with a MSB of 1.
+ * Then, to avoid making all of the first generated numbers negative,
+ * we do another increment at the end.
+ */
+let checkInitialized = (random: Random) => {
+  use Uint32.*
+
+  if (!random.initialized) {
+    while (clz(squares(random.counter, random.seed)) > 0ul) {
+      incCounter(random)
+    }
+    // now that it's initialized, increment it again to make it a little more random
+    incCounter(random)
+    random.initialized = true
+  }
+}
+
+/**
+ * Generates a random 32-bit integer from the given pseudo-random number generator.
+ *
+ * @param random: The pseudo-random number generator to use
+ * @returns The randomly generated number
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `nextInt32`
+ */
+provide let nextUint32 = (random: Random) => {
+  checkInitialized(random)
+  let ret = squares(random.counter, random.seed)
+  incCounter(random)
+  ret
+}
+
+/**
+ * Generates a random 64-bit integer from the given pseudo-random number generator.
+ *
+ * @param random: The pseudo-random number generator to use
+ * @returns The randomly generated number
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `nextInt64`
+ */
+provide let nextUint64 = (random: Random) => {
+  use Uint64.{ (|), (<<) }
+  checkInitialized(random)
+  let ret1 = Uint64.fromNumber(
+    Uint32.toNumber(squares(random.counter, random.seed))
+  )
+  incCounter(random)
+  let ret2 = Uint64.fromNumber(
+    Uint32.toNumber(squares(random.counter, random.seed))
+  )
+  incCounter(random)
+  ret1 << 32uL | ret2
+}
+
+/**
+ * Generates a random 32-bit integer from the given pseudo-random number generator
+ * from a uniform distribution in the given range.
+ *
+ * @param random: The pseudo-random number generator to use
+ * @param low: The lower bound of the range (inclusive)
+ * @param high: The upper bound of the range (exclusive)
+ * @returns The randomly generated number
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `nextInt32InRange`
+ */
+provide let nextUint32InRange = (random: Random, low: Uint32, high: Uint32) => {
+  // Algorithm source: https://www.pcg-random.org/posts/bounded-rands.html#bitmask-with-rejection-unbiased-apples-method
+  use Uint32.*
+  let range = high - low - 1ul
+  let mask = lnot(0ul) >>> clz(range | 1ul)
+  let mut x = nextUint32(random) & mask
+  let mut iters = 0ul
+  while (x > range) {
+    x = nextUint32(random) & mask
+    iters += 1ul
+  }
+  x + low
+}
+
+/**
+ * Generates a random 64-bit integer from the given pseudo-random number generator
+ * from a uniform distribution in the given range.
+ *
+ * @param random: The pseudo-random number generator to use
+ * @param low: The lower bound of the range (inclusive)
+ * @param high: The upper bound of the range (exclusive)
+ * @returns The randomly generated number
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `nextInt64InRange`
+ */
+provide let nextUint64InRange = (random: Random, low: Uint64, high: Uint64) => {
+  // Algorithm source: https://www.pcg-random.org/posts/bounded-rands.html#bitmask-with-rejection-unbiased-apples-method
+  use Uint64.*
+  let range = high - low - 1uL
+  let mask = lnot(0uL) >>> clz(range | 1uL)
+  let mut x = nextUint64(random) & mask
+  while (x > range) {
+    x = nextUint64(random) & mask
+  }
+  x + low
+}

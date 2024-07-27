@@ -1,0 +1,7 @@
+module SameAsDefault
+
+enum Thing {
+  HelloWorld,
+}
+
+print(HelloWorld)

@@ -155,6 +155,8 @@ let in_file = name => {
   {loc_start: loc, loc_end: loc, loc_ghost: true};
 };
 
+let start_pos = {pos_fname: "", pos_lnum: 1, pos_cnum: 0, pos_bol: 0};
+
 let dummy_loc = {loc_start: dummy_pos, loc_end: dummy_pos, loc_ghost: true};
 
 let sexp_of_t = loc =>
@@ -171,9 +173,12 @@ let t_of_sexp = sexp =>
   };
 
 let curr = lexbuf => {
-  loc_start: lexbuf.lex_start_p,
-  loc_end: lexbuf.lex_curr_p,
-  loc_ghost: false,
+  let (loc_start, loc_end) = Sedlexing.lexing_positions(lexbuf);
+  {loc_start, loc_end, loc_ghost: false};
+};
+
+let of_positions = (loc_start, loc_end) => {
+  {loc_start, loc_end, loc_ghost: false};
 };
 
 let init = (lexbuf, fname) =>
@@ -420,6 +425,7 @@ let echo_eof = () => {
   incr(num_loc_lines);
 };
 
+[@deriving (sexp, yojson)]
 type loc('a) = {
   txt: 'a,
   loc: t,
@@ -429,7 +435,7 @@ let mkloc = (txt, loc) => {txt, loc};
 let mknoloc = txt => mkloc(txt, dummy_loc);
 
 type error = {
-  loc: t,
+  error_loc: t,
   msg: string,
   sub: list(error),
   if_highlight: string /* alternative message if locations are highlighted */
@@ -462,12 +468,12 @@ let print_phantom_error_prefix = ppf =>
 let errorf = (~loc=dummy_loc, ~sub=[], ~if_highlight="", fmt) =>
   pp_ksprintf(
     ~before=print_phantom_error_prefix,
-    msg => {loc, msg, sub, if_highlight},
+    msg => {error_loc: loc, msg, sub, if_highlight},
     fmt,
   );
 
 let error = (~loc=dummy_loc, ~sub=[], ~if_highlight="", msg) => {
-  loc,
+  error_loc: loc,
   msg,
   sub,
   if_highlight,
@@ -498,8 +504,8 @@ let error_of_exn = exn =>
     loop(error_of_exn^);
   };
 
-let rec default_error_reporter = (ppf, {loc, msg, sub, if_highlight}) => {
-  fprintf(ppf, "@[<v>%a %s", print_error, loc, msg);
+let rec default_error_reporter = (ppf, {error_loc, msg, sub, if_highlight}) => {
+  fprintf(ppf, "@[<v>%a %s", print_error, error_loc, msg);
   List.iter(Format.fprintf(ppf, "@,@[<2>%a@]", default_error_reporter), sub);
   fprintf(ppf, "@]");
 };
@@ -559,5 +565,5 @@ let () =
 
 let raise_errorf = (~loc=dummy_loc, ~sub=[], ~if_highlight="") =>
   pp_ksprintf(~before=print_phantom_error_prefix, msg =>
-    raise(Error({loc, msg, sub, if_highlight}))
+    raise(Error({error_loc: loc, msg, sub, if_highlight}))
   );

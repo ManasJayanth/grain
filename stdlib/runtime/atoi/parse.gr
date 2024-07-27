@@ -1,0 +1,213 @@
+@noPervasives
+module Parse
+
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{
+  (+),
+  (-),
+  gtU as (>),
+  geU as (>=),
+  ltU as (<),
+  (>>),
+  (==),
+  (!=),
+  (&),
+}
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/memory" include Memory
+from "runtime/unsafe/tags" include Tags
+from "runtime/bigint" include Bigint as BI
+from "runtime/numbers" include Numbers
+use Numbers.{ reducedInteger }
+
+/**
+ * Represents an error that occurred trying to parse an integer.
+ *
+ * @since v0.6.0
+ */
+provide enum ParseIntError {
+  /**
+   * Represents an error caused by trying to parse an empty string.
+   */
+  ParseIntEmptyString,
+  /**
+   * Represents an error caused by trying to parse a string with an invalid character.
+   */
+  ParseIntInvalidDigit,
+  /**
+   * Represents an error caused by trying to parse with an invalid radix.
+   */
+  ParseIntInvalidRadix,
+}
+
+primitive (&&) = "@and"
+primitive (||) = "@or"
+
+@unsafe
+provide let parseInt = (string: String, radix: Number) => {
+  use WasmI64.{ (+) as addWasmI64 }
+  let _CHAR_0 = 0x30n
+  let _CHAR_B = 0x42n
+  let _CHAR_b = 0x62n
+  let _CHAR_O = 0x4fn
+  let _CHAR_o = 0x6fn
+  let _CHAR_X = 0x58n
+  let _CHAR_x = 0x78n
+
+  let _CHAR_A = 0x41n
+  let _CHAR_a = 0x61n
+
+  let _CHAR_UNDERSCORE = 0x5fn
+  let _CHAR_MINUS = 0x2dn
+
+  let _INT_MIN = -9223372036854775808N
+
+  // Don't need to process Unicode length since if the string
+  // contains non-ascii characters, it's not a valid integer
+  let strLen = WasmI32.load(WasmI32.fromGrain(string), 4n)
+
+  // Our pointer within the string we're parsing, offset by the
+  // header
+  let mut offset = WasmI32.fromGrain(string) + 8n
+
+  let strEnd = offset + strLen
+
+  let radix = WasmI32.fromGrain(radix)
+  if (
+    WasmI32.eqz(radix & Tags._GRAIN_NUMBER_TAG_MASK) ||
+    radix < WasmI32.fromGrain(2) ||
+    radix > WasmI32.fromGrain(36)
+  ) {
+    return Err(ParseIntInvalidRadix)
+  }
+
+  if (WasmI32.eqz(strLen)) {
+    return Err(ParseIntEmptyString)
+  }
+
+  let mut char = WasmI32.load8U(offset, 0n)
+
+  let mut limit = addWasmI64(_INT_MIN, 1N)
+
+  // Check for a sign
+  let mut negative = false
+  if (char == _CHAR_MINUS) {
+    negative = true
+    offset += 1n
+    limit = _INT_MIN
+    char = WasmI32.load8U(offset, 0n)
+  }
+
+  let mut radix = WasmI64.extendI32S(radix >> 1n)
+
+  // Check if we should override the supplied radix
+  if (char == _CHAR_0 && strLen > 2n) {
+    match (WasmI32.load8U(offset, 1n)) {
+      c when c == _CHAR_B || c == _CHAR_b => {
+        radix = 2N
+        offset += 2n
+      },
+      c when c == _CHAR_O || c == _CHAR_o => {
+        radix = 8N
+        offset += 2n
+      },
+      c when c == _CHAR_X || c == _CHAR_x => {
+        radix = 16N
+        offset += 2n
+      },
+      _ => void,
+    }
+  }
+
+  // We try to avoid allocating a BigInt if it's not needed
+  let mut value = 0N
+  let mut radixBigInt = 0n
+  let mut valueBigInt = 0n
+  let mut isBigInt = 0n
+  let mut sawDigit = 0n
+
+  for (let mut i = offset; i < strEnd; i += 1n) {
+    let char = WasmI32.load8U(i, 0n)
+
+    // Ignore underscore characters
+    if (char == _CHAR_UNDERSCORE) {
+      continue
+    }
+
+    sawDigit = 1n
+
+    let mut digit = 0n
+
+    match (char) {
+      c when c - _CHAR_0 < 10n => digit = char - _CHAR_0,
+      c when c - _CHAR_A < 26n => digit = char - _CHAR_A + 10n,
+      c when c - _CHAR_a < 26n => digit = char - _CHAR_a + 10n,
+      _ => {
+        return Err(ParseIntInvalidDigit)
+      },
+    }
+
+    if (digit >= WasmI32.wrapI64(radix)) {
+      return Err(ParseIntInvalidDigit)
+    }
+
+    let digit = WasmI64.extendI32U(digit)
+
+    if (WasmI32.eqz(isBigInt)) {
+      use WasmI64.{ (+) }
+      use WasmI64.{ (*), (<) }
+      let prevValue = value
+      value *= radix
+      // Check for overflow
+      // 64-bit int min + 1
+      if (value < limit + digit) {
+        // we overflowed. allocate BigInt and use instead
+        isBigInt = 1n
+        valueBigInt = BI.makeWrappedUint64(prevValue * -1N)
+        radixBigInt = BI.makeWrappedUint64(radix)
+        let newvalue = BI.mul(valueBigInt, radixBigInt)
+        Memory.decRef(valueBigInt)
+        valueBigInt = newvalue
+        let newvalue = BI.addInt(valueBigInt, digit)
+        Memory.decRef(valueBigInt)
+        valueBigInt = newvalue
+      } else {
+        use WasmI64.{ (-) }
+        // To quote the OpenJDK,
+        // "Accumulating negatively avoids surprises near MAX_VALUE"
+        // The minimum value of a 64-bit integer (-9223372036854775808) can't be
+        // represented as a positive number because it would be larger than the
+        // maximum 64-bit integer (9223372036854775807), so we'd be unable to
+        // parse negatives as positives and multiply by the sign at the end.
+        // Instead, we represent all positive numbers as negative numbers since
+        // we have one unit more headroom.
+        value -= digit
+      }
+    } else {
+      let newvalue = BI.mul(valueBigInt, radixBigInt)
+      Memory.decRef(valueBigInt)
+      valueBigInt = newvalue
+      let newvalue = BI.addInt(valueBigInt, digit)
+      Memory.decRef(valueBigInt)
+      valueBigInt = newvalue
+    }
+  }
+  use WasmI64.{ (*) }
+  // TODO: Verify this is suitable for handling "_"
+  if (WasmI32.eqz(sawDigit)) return Err(ParseIntInvalidDigit)
+
+  if (WasmI32.eqz(isBigInt)) {
+    let value = if (negative) value else value * -1N
+    let number = WasmI32.toGrain(Memory.incRef(reducedInteger(value))): Number
+    return Ok(number)
+  }
+
+  // BigInt number is accumulated in positive form
+  if (negative) {
+    let newvalue = BI.negate(valueBigInt)
+    Memory.decRef(valueBigInt)
+    return Ok(WasmI32.toGrain(newvalue))
+  }
+
+  return Ok(WasmI32.toGrain(valueBigInt))
+}

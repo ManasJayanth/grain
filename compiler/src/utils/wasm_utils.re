@@ -21,7 +21,8 @@ type wasm_bin_section_type =
   | Start
   | Element
   | Code
-  | Data;
+  | Data
+  | DataCount;
 
 [@deriving sexp]
 type wasm_bin_section = {
@@ -139,26 +140,18 @@ let read_leb128_i32 = (bytesrc): int32 =>
   read_leb128(~signed=true, ~maxbits=32, ~conv=i32_of_u64, bytesrc);
 let read_leb128_i32_input = inchan =>
   read_leb128_i32(() => input_byte(inchan));
-let read_leb128_i32_stream = stream =>
-  read_leb128_i32(() => Stream.next(stream));
 let read_leb128_u32 = (bytesrc): int32 =>
   read_leb128(~signed=false, ~maxbits=32, ~conv=i32_of_u64, bytesrc);
 let read_leb128_u32_input = inchan =>
   read_leb128_u32(() => input_byte(inchan));
-let read_leb128_u32_stream = stream =>
-  read_leb128_u32(() => Stream.next(stream));
 let read_leb128_i64 = (bytesrc): int64 =>
   read_leb128(~signed=true, ~maxbits=64, ~conv=identity, bytesrc);
 let read_leb128_i64_input = inchan =>
   read_leb128_i64(() => input_byte(inchan));
-let read_leb128_i64_stream = stream =>
-  read_leb128_i64(() => Stream.next(stream));
 let read_leb128_u64 = (bytesrc): int64 =>
   read_leb128(~signed=false, ~maxbits=64, ~conv=identity, bytesrc);
 let read_leb128_u64_input = inchan =>
   read_leb128_u64(() => input_byte(inchan));
-let read_leb128_u64_stream = stream =>
-  read_leb128_u64(() => Stream.next(stream));
 
 let read_int32 = inchan => {
   let bytes = Bytes.create(4);
@@ -220,6 +213,7 @@ let section_type_of_int = (~pos=?, ~name=?) =>
   | 9 => Element
   | 10 => Code
   | 11 => Data
+  | 12 => DataCount
   | n => raise(MalformedSectionType(n, pos));
 
 let int_of_section_type =
@@ -235,7 +229,8 @@ let int_of_section_type =
   | Start => 8
   | Element => 9
   | Code => 10
-  | Data => 11;
+  | Data => 11
+  | DataCount => 12;
 
 let get_wasm_sections = (~reset=false, inchan) => {
   let orig_pos = pos_in(inchan);
@@ -257,7 +252,7 @@ let get_wasm_sections = (~reset=false, inchan) => {
         actual,
       );
     let version_strbuilder = (b, actual) =>
-      /* TODO: This should probably warn, not fail */
+      // TODO: This should probably warn, not fail
       Printf.sprintf(
         "Error reading WebAssembly version. Expected byte 0x%02x; found 0x%02x",
         b,
@@ -418,7 +413,7 @@ module type BinarySectionSpec = {
   type t;
 
   let name: string;
-  let deserialize: bytes => t;
+  let deserialize: (in_channel, int) => t;
   let accepts_version: abi_version => bool;
   let serialize: t => bytes;
 };
@@ -459,12 +454,7 @@ module BinarySection =
             when name == Spec.name && Spec.accepts_version(abi_version) =>
           /* Now we're at the start of the section. Time to read */
           let realsize = size - (pos_in(inchan) - offset);
-          let bytes = Bytes.create(realsize);
-          if (input(inchan, bytes, 0, realsize) == realsize) {
-            Some(Spec.deserialize(bytes));
-          } else {
-            process(tl);
-          };
+          Some(Spec.deserialize(inchan, realsize));
         | _ => process(tl)
         };
       };

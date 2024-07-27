@@ -26,74 +26,7 @@ let () =
     }
   );
 
-/* Diagnostic mode - read the file to compile from stdin and return nothing or compile errors on stdout */
-let compile_string = name => {
-  let program_str = ref("");
-  /* read from stdin until we get end of buffer */
-  try(
-    while (true) {
-      program_str := program_str^ ++ read_line() ++ "\n";
-    }
-  ) {
-  | exn => ()
-  };
-
-  try(
-    ignore(
-      {
-        let compile_state =
-          Compile.compile_string(
-            ~hook=stop_after_typed_well_formed,
-            ~name,
-            program_str^,
-          );
-
-        switch (compile_state.cstate_desc) {
-        | TypedWellFormed(typed_program) =>
-          let values: list(Grain_diagnostics.Lenses.lens_t) =
-            Grain_diagnostics.Lenses.get_lenses_values(typed_program);
-          let warnings: list(Grain_diagnostics.Output.lsp_warning) =
-            Grain_diagnostics.Output.convert_warnings(
-              Grain_utils.Warnings.get_warnings(),
-              name,
-            );
-          let json =
-            Grain_diagnostics.Output.result_to_json(
-              ~errors=[],
-              ~warnings,
-              ~values,
-            );
-          print_endline(json);
-        | _ =>
-          // If you reach this fail, your stop_after_* and variant are mismatched
-          failwith("Impossible by the `stop_after_*` hook")
-        };
-      },
-    )
-  ) {
-  | exn =>
-    let error = Grain_diagnostics.Output.exn_to_lsp_error(exn);
-    let errors =
-      switch (error) {
-      | None => []
-      | Some(err) => [err]
-      };
-
-    let json =
-      Grain_diagnostics.Output.result_to_json(
-        ~errors,
-        ~warnings=[],
-        ~values=[],
-      );
-    print_endline(json);
-  };
-
-  /* as the compiler throws an exception on an error, we always just return OK */
-  `Ok();
-};
-
 let compile_file = (name, outfile_arg) => {
-  Grain_utils.Config.base_path := dirname(name);
   if (!Printexc.backtrace_status() && Grain_utils.Config.verbose^) {
     Printexc.record_backtrace(true);
   };
@@ -103,9 +36,6 @@ let compile_file = (name, outfile_arg) => {
         ~default=Compile.default_output_filename(name),
         outfile_arg,
       );
-    if (Grain_utils.Config.debug^) {
-      Compile.save_mashed(name, Compile.default_mashtree_filename(outfile));
-    };
     let hook =
       if (Grain_utils.Config.statically_link^) {
         Compile.stop_after_assembled;
@@ -136,15 +66,6 @@ let compile_file = (name, outfile_arg) => {
   `Ok();
 };
 
-/* add a wrapper so we can switch to LSP mode based on cli config */
-
-let compile_wrapper = (name, outfile_arg) =>
-  if (Grain_utils.Config.lsp_mode^) {
-    compile_string(name);
-  } else {
-    compile_file(name, outfile_arg);
-  };
-
 /** Converter which checks that the given output filename is valid */
 
 let output_file_conv = {
@@ -165,10 +86,7 @@ let input_file_conv = {
   open Arg;
   let (prsr, prntr) = non_dir_file;
 
-  (
-    filename => prsr(Grain_utils.Files.normalize_separators(filename)),
-    prntr,
-  );
+  (filename => prsr(filename), prntr);
 };
 
 let input_filename = {
@@ -196,20 +114,20 @@ let cmd = {
     | None => "unknown"
     | Some(v) => Build_info.V1.Version.to_string(v)
     };
-  (
+  Cmd.v(
+    Cmd.info(Sys.argv[0], ~version, ~doc),
     Term.(
       ret(
-        Grain_utils.Config.with_cli_options(compile_wrapper)
+        Grain_utils.Config.with_cli_options(compile_file)
         $ input_filename
         $ output_filename,
       )
     ),
-    Term.info(Sys.argv[0], ~version, ~doc),
   );
 };
 
 let () =
-  switch (Term.eval(cmd)) {
-  | `Error(_) => exit(1)
-  | _ => exit(0)
+  switch (Cmd.eval_value(cmd)) {
+  | Error(_) => exit(1)
+  | _ => ()
   };

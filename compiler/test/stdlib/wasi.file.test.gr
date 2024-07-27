@@ -1,0 +1,83 @@
+module FileTest
+
+from "wasi/file" include File as Fs
+from "bytes" include Bytes
+from "result" include Result
+
+// fdRead
+let foo = Result.unwrap(
+  Fs.open("test/test-data/foo.txt", [Fs.Create], [Fs.FdRead], [Fs.FdRead], [])
+)
+
+let (buf, nread) = Result.unwrap(Fs.fdRead(foo, 40))
+
+Fs.fdClose(foo)
+
+assert buf == Bytes.fromString("foo, bar, & baz")
+assert nread == 15
+
+// Check absolute path
+let foo = Result.unwrap(
+  Fs.open("/test/test-data/foo.txt", [Fs.Create], [Fs.FdRead], [Fs.FdRead], [])
+)
+
+let (buf, nread) = Result.unwrap(Fs.fdRead(foo, 40))
+
+Fs.fdClose(foo)
+
+assert buf == Bytes.fromString("foo, bar, & baz")
+assert nread == 15
+
+// Check relative to current directory
+let foo = Result.unwrap(
+  Fs.open("./test/test-data/foo.txt", [Fs.Create], [Fs.FdRead], [Fs.FdRead], [])
+)
+
+let (buf, nread) = Result.unwrap(Fs.fdRead(foo, 40))
+
+Fs.fdClose(foo)
+
+assert buf == Bytes.fromString("foo, bar, & baz")
+assert nread == 15
+
+// Check path resolution
+let foo = Result.unwrap(
+  Fs.open(
+    "/test/test-data/../test-data/foo.txt",
+    [Fs.Create],
+    [Fs.FdRead],
+    [Fs.FdRead],
+    []
+  )
+)
+
+let (buf, nread) = Result.unwrap(Fs.fdRead(foo, 40))
+
+Fs.fdClose(foo)
+
+assert buf == Bytes.fromString("foo, bar, & baz")
+assert nread == 15
+
+// fdWrite
+let foo = Result.unwrap(
+  Fs.open(
+    "test/test-data/bar.txt",
+    [Fs.Create, Fs.Truncate],
+    [Fs.FdRead, Fs.FdWrite, Fs.FdSeek, Fs.FdSetSize],
+    [Fs.FdRead, Fs.FdWrite, Fs.FdSeek, Fs.FdSetSize],
+    []
+  )
+)
+
+assert Fs.fdWrite(foo, Bytes.fromString("this and that")) == Ok(13)
+
+Fs.fdSeek(foo, 0L, Fs.Set)
+
+let (buf, nread) = Result.unwrap(Fs.fdRead(foo, 40))
+
+Fs.fdSetSize(foo, 0L)
+
+Fs.fdClose(foo)
+
+assert buf == Bytes.fromString("this and that")
+assert nread == 13

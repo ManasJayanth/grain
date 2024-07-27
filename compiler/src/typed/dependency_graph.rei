@@ -26,10 +26,14 @@ module Make:
     let lookup_filename: string => option(DV.t);
 
     /**
-   Compiles the dependencies of the given filename.
+   Compiles the full dependency graph.
    */
-    let compile_dependencies:
-      (~loc: Grain_parsing.Location.t=?, string) => unit;
+    let compile_graph: unit => unit;
+
+    /**
+   Returns a topologically sorted list of all dependencies.
+   */
+    let get_dependencies: unit => list(string);
 
     /**
    Dumps the edges in this graph to stderr.

@@ -3,7 +3,26 @@
  various forms of caching.
  */
 
-// TODO: (#598) Should be safe for now, but we should harden this against
+type eol =
+  | CRLF
+  | LF;
+
+let determine_eol = line => {
+  switch (line) {
+  | Some(line) when String.length(line) > 0 =>
+    // check what the last char was
+    if (String.ends_with(~suffix="\r", line)) {
+      CRLF;
+    } else {
+      LF;
+    }
+  | _ =>
+    // must use OS default as this file has no newline we can use
+    Sys.win32 ? CRLF : LF
+  };
+};
+
+// TODO(#598): Should be safe for now, but we should harden this against
 // relative paths by converting everything to absolute paths
 
 let modified_cache = Hashtbl.create(16);
@@ -50,4 +69,26 @@ let open_file_for_writing = f => {
   Hashtbl.remove(modified_cache, f);
   List.iter(((flusher, _)) => flusher(f), cache_flushers^);
   oc;
+};
+
+/** Recursive readdir */
+let rec readdir = dir => {
+  Fs.readDirExn(dir)
+  |> List.fold_left(
+       (results, filepath) => {
+         Sys.is_directory(Filepath.to_string(filepath))
+           ? Array.append(results, readdir(filepath))
+           : Array.append(results, [|filepath|])
+       },
+       [||],
+     );
+};
+
+let ensure_parent_directory_exists = fname => {
+  // TODO(#216): Cleanup once Fp.t is used everywhere
+  let full_path = Filepath.String.derelativize(fname);
+  // No longer swallowing the error because we can handle the CWD case
+  // thus we should raise if something is actually wrong
+  // TODO: Switch this to return the Result type
+  Fs.mkDirPExn(Fp.dirName(full_path));
 };

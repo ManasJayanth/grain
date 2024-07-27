@@ -12,7 +12,7 @@ type attributes = Typedtree.attributes;
 let default_loc = Location.dummy_loc;
 let default_env = Env.empty;
 let default_attributes = [];
-let default_allocation_type = HeapAllocated;
+let default_allocation_type = Managed;
 
 let or_default_loc = Option.value(~default=default_loc);
 let or_default_env = Option.value(~default=default_env);
@@ -44,45 +44,21 @@ module Comp = {
   let imm = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, imm) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CImmExpr(imm));
   let number = (~loc=?, ~attributes=?, ~env=?, i) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=StackAllocated(WasmI32),
-      ~env?,
-      CNumber(i),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CNumber(i));
   let int32 = (~loc=?, ~attributes=?, ~env=?, i) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CInt32(i),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CInt32(i));
   let int64 = (~loc=?, ~attributes=?, ~env=?, i) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CInt64(i),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CInt64(i));
+  let uint32 = (~loc=?, ~attributes=?, ~env=?, i) =>
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CUint32(i));
+  let uint64 = (~loc=?, ~attributes=?, ~env=?, i) =>
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CUint64(i));
   let float32 = (~loc=?, ~attributes=?, ~env=?, i) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CFloat32(i),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CFloat32(i));
   let float64 = (~loc=?, ~attributes=?, ~env=?, i) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CFloat64(i),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CFloat64(i));
+  let prim0 = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, p0) =>
+    mk(~loc?, ~attributes?, ~allocation_type, ~env?, CPrim0(p0));
   let prim1 = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, p1, a) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CPrim1(p1, a));
   let prim2 = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, p2, a1, a2) =>
@@ -96,40 +72,28 @@ module Comp = {
   let assign = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, a1, a2) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CAssign(a1, a2));
   let tuple = (~loc=?, ~attributes=?, ~env=?, elts) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CTuple(elts),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CTuple(elts));
   let array = (~loc=?, ~attributes=?, ~env=?, elts) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CArray(elts),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CArray(elts));
   let array_get = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, arr, i) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CArrayGet(arr, i));
   let array_set = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, arr, i, a) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CArraySet(arr, i, a));
-  let record = (~loc=?, ~attributes=?, ~env=?, ttag, elts) =>
+  let record = (~loc=?, ~attributes=?, ~env=?, type_hash, ttag, elts) =>
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=HeapAllocated,
+      ~allocation_type=Managed,
       ~env?,
-      CRecord(ttag, elts),
+      CRecord(type_hash, ttag, elts),
     );
-  let adt = (~loc=?, ~attributes=?, ~env=?, ttag, vtag, elts) =>
+  let adt = (~loc=?, ~attributes=?, ~env=?, type_hash, ttag, vtag, elts) =>
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=HeapAllocated,
+      ~allocation_type=Managed,
       ~env?,
-      CAdt(ttag, vtag, elts),
+      CAdt(type_hash, ttag, vtag, elts),
     );
   let tuple_get = (~loc=?, ~attributes=?, ~allocation_type, ~env=?, idx, tup) =>
     mk(
@@ -160,7 +124,7 @@ module Comp = {
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=StackAllocated(WasmI32),
+      ~allocation_type=Unmanaged(WasmI32),
       ~env?,
       CGetAdtTag(value),
     );
@@ -188,7 +152,7 @@ module Comp = {
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=StackAllocated(WasmI32),
+      ~allocation_type=Unmanaged(WasmI32),
       ~env?,
       CFor(cond, inc, body),
     );
@@ -196,7 +160,7 @@ module Comp = {
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=StackAllocated(WasmI32),
+      ~allocation_type=Unmanaged(WasmI32),
       ~env?,
       CContinue,
     );
@@ -204,9 +168,17 @@ module Comp = {
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=StackAllocated(WasmI32),
+      ~allocation_type=Unmanaged(WasmI32),
       ~env?,
       CBreak,
+    );
+  let return = (~loc=?, ~attributes=?, ~env=?, ret) =>
+    mk(
+      ~loc?,
+      ~attributes?,
+      ~allocation_type=Unmanaged(WasmI32),
+      ~env?,
+      CReturn(ret),
     );
   let switch_ =
       (
@@ -236,41 +208,18 @@ module Comp = {
         args,
       ) =>
     mk(~loc?, ~attributes?, ~allocation_type, ~env?, CApp(func, args, tail));
-  let app_builtin =
-      (~loc=?, ~attributes=?, ~allocation_type, ~env=?, modname, name, args) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type,
-      ~env?,
-      CAppBuiltin(modname, name, args),
-    );
   let lambda = (~loc=?, ~attributes=?, ~env=?, ~name=?, args, body) =>
     mk(
       ~loc?,
       ~attributes?,
-      ~allocation_type=HeapAllocated,
+      ~allocation_type=Managed,
       ~env?,
-      CLambda(name, args, body),
+      CLambda(name, args, body, Uncomputed),
     );
   let bytes = (~loc=?, ~attributes=?, ~env=?, b) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CBytes(b),
-    );
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CBytes(b));
   let string = (~loc=?, ~attributes=?, ~env=?, s) =>
-    mk(
-      ~loc?,
-      ~attributes?,
-      ~allocation_type=HeapAllocated,
-      ~env?,
-      CString(s),
-    );
-  let char = (~loc=?, ~attributes=?, ~env=?, c) =>
-    mk(~loc?, ~attributes?, ~allocation_type=HeapAllocated, ~env?, CChar(c));
+    mk(~loc?, ~attributes?, ~allocation_type=Managed, ~env?, CString(s));
 };
 
 module AExp = {
@@ -311,7 +260,7 @@ module AExp = {
     mk(~loc?, ~env?, ~alloc_type=e.comp_allocation_type, AEComp(e));
 };
 
-module Imp = {
+module IncludeDeclaration = {
   let mk = (use_id, d, s, e) => {
     imp_use_id: use_id,
     imp_desc: d,
@@ -325,6 +274,4 @@ module Imp = {
     mk(a, WasmFunction(md, name), s, global);
   let wasm_value = (~global=Nonglobal, a, md, name, s) =>
     mk(a, WasmValue(md, name), s, global);
-  let js_func = (~global=Nonglobal, a, md, name, s) =>
-    mk(a, JSFunction(md, name), s, global);
 };

@@ -10,17 +10,32 @@ describe("blocks", ({test}) => {
     Ast_helper.(
       assertParse(
         "block_parse_lone_no_args_enum",
-        "{ Foo }",
+        "module Test; { Foo }",
         {
+          attributes: [],
+          module_name: Location.mknoloc("Test"),
           statements: [
-            Top.expr(
-              Exp.block([
-                Exp.ident(Location.mknoloc(Identifier.IdentName("Foo"))),
-              ]),
+            Toplevel.expr(
+              ~loc=Location.dummy_loc,
+              ~core_loc=Location.dummy_loc,
+              Expression.block(
+                ~loc=Location.dummy_loc,
+                ~core_loc=Location.dummy_loc,
+                [
+                  Expression.singleton_construct(
+                    ~loc=Location.dummy_loc,
+                    ~core_loc=Location.dummy_loc,
+                    Location.mknoloc(
+                      Identifier.IdentName(Location.mknoloc("Foo")),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ],
           comments: [],
           prog_loc: Location.dummy_loc,
+          prog_core_loc: Location.dummy_loc,
         },
       )
     )

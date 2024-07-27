@@ -14,8 +14,6 @@
 /*                                                                        */
 /**************************************************************************/
 
-open Grain_parsing;
-open Asttypes;
 open Typedtree;
 
 module type IteratorArgument = {
@@ -32,10 +30,10 @@ module type IteratorArgument = {
   let leave_core_type: core_type => unit;
   let leave_toplevel_stmt: toplevel_stmt => unit;
 
-  let enter_bindings: (export_flag, rec_flag, mut_flag) => unit;
+  let enter_bindings: (rec_flag, mut_flag) => unit;
   let enter_binding: value_binding => unit;
   let leave_binding: value_binding => unit;
-  let leave_bindings: (export_flag, rec_flag, mut_flag) => unit;
+  let leave_bindings: (rec_flag, mut_flag) => unit;
 
   let enter_data_declarations: unit => unit;
   let enter_data_declaration: data_declaration => unit;
@@ -65,7 +63,7 @@ module MakeIterator =
     | TTyAny
     | TTyVar(_) => ()
     | TTyArrow(args, ret) =>
-      List.iter(iter_core_type, args);
+      List.iter(((_, a)) => iter_core_type(a), args);
       iter_core_type(ret);
     | TTyConstr(_, _, args)
     | TTyTuple(args) => List.iter(iter_core_type, args)
@@ -83,15 +81,16 @@ module MakeIterator =
     Iter.leave_binding(vb);
   }
 
-  and iter_bindings = (export_flag, rec_flag, mut_flag, binds) => {
-    Iter.enter_bindings(export_flag, rec_flag, mut_flag);
+  and iter_bindings = (rec_flag, mut_flag, binds) => {
+    Iter.enter_bindings(rec_flag, mut_flag);
     List.iter(iter_binding, binds);
-    Iter.leave_bindings(export_flag, rec_flag, mut_flag);
+    Iter.leave_bindings(rec_flag, mut_flag);
   }
 
-  and iter_match_branch = ({mb_pat, mb_body}) => {
+  and iter_match_branch = ({mb_pat, mb_body, mb_guard}) => {
     iter_pattern(mb_pat);
     iter_expression(mb_body);
+    Option.iter(iter_expression, mb_guard);
   }
 
   and iter_match_branches = branches => List.iter(iter_match_branch, branches)
@@ -99,6 +98,7 @@ module MakeIterator =
   and iter_constructor_arguments =
     fun
     | TConstrTuple(args) => List.iter(iter_core_type, args)
+    | TConstrRecord(rfs) => List.iter(iter_record_field, rfs)
     | TConstrSingleton => ()
 
   and iter_constructor_declaration = ({cd_args, cd_res}) => {
@@ -121,31 +121,31 @@ module MakeIterator =
     Iter.leave_data_declaration(decl);
   }
 
-  /* FIXME: These two functions are gross */
   and iter_toplevel_stmt = stmt => {
     Iter.enter_toplevel_stmt(stmt);
     switch (stmt.ttop_desc) {
     | TTopData(decls) => List.iter(iter_data_declaration, decls)
     | TTopException(_)
     | TTopForeign(_)
-    | TTopImport(_)
-    | TTopExport(_) => ()
+    | TTopInclude(_)
+    | TTopProvide(_) => ()
+    | TTopModule({tmod_statements}) => iter_toplevel_stmts(tmod_statements)
     | TTopExpr(e) => iter_expression(e)
-    | TTopLet(exportflag, recflag, mutflag, binds) =>
-      iter_bindings(exportflag, recflag, mutflag, binds)
+    | TTopLet(recflag, mutflag, binds) =>
+      iter_bindings(recflag, mutflag, binds)
     };
     Iter.leave_toplevel_stmt(stmt);
   }
-
   and iter_toplevel_stmts = stmts =>
     List.iter(
       cur =>
         switch (cur.ttop_desc) {
         | TTopException(_)
         | TTopForeign(_)
-        | TTopImport(_)
-        | TTopExport(_)
+        | TTopInclude(_)
+        | TTopProvide(_)
         | TTopExpr(_)
+        | TTopModule(_)
         | TTopLet(_) => iter_toplevel_stmt(cur)
         | TTopData(_) =>
           Iter.enter_data_declarations();
@@ -181,6 +181,17 @@ module MakeIterator =
     Iter.leave_pattern(pat);
   }
 
+  and iter_record_fields = rfs => {
+    Array.iter(
+      expr =>
+        switch (expr) {
+        | (_, Overridden(_, expr)) => iter_expression(expr)
+        | _ => ()
+        },
+      rfs,
+    );
+  }
+
   and iter_expression = ({exp_desc, exp_extra} as exp) => {
     Iter.enter_expression(exp);
     List.iter(
@@ -191,15 +202,16 @@ module MakeIterator =
       exp_extra,
     );
     switch (exp_desc) {
-    | TExpNull
+    | TExpUse(_)
     | TExpIdent(_)
     | TExpConstant(_) => ()
     | TExpLet(recflag, mutflag, binds) =>
-      iter_bindings(Nonexported, recflag, mutflag, binds)
+      iter_bindings(recflag, mutflag, binds)
     | TExpLambda(branches, _) => iter_match_branches(branches)
-    | TExpApp(exp, args) =>
+    | TExpApp(exp, _, args) =>
       iter_expression(exp);
-      List.iter(iter_expression, args);
+      List.iter(((_, arg)) => iter_expression(arg), args);
+    | TExpPrim0(_) => ()
     | TExpPrim1(_, e) => iter_expression(e)
     | TExpPrim2(_, e1, e2) =>
       iter_expression(e1);
@@ -214,13 +226,9 @@ module MakeIterator =
     | TExpMatch(value, branches, _) =>
       iter_expression(value);
       iter_match_branches(branches);
-    | TExpRecord(args) =>
-      Array.iter(
-        fun
-        | (_, Overridden(_, expr)) => iter_expression(expr)
-        | _ => (),
-        args,
-      )
+    | TExpRecord(b, args) =>
+      Option.iter(iter_expression, b);
+      iter_record_fields(args);
     | TExpRecordGet(expr, _, _) => iter_expression(expr)
     | TExpRecordSet(e1, _, _, e2) =>
       iter_expression(e1);
@@ -228,14 +236,18 @@ module MakeIterator =
     | TExpTuple(args)
     | TExpArray(args)
     | TExpBlock(args)
-    | TExpConstruct(_, _, args) => List.iter(iter_expression, args)
+    | TExpConstruct(_, _, TExpConstrTuple(args)) =>
+      List.iter(iter_expression, args)
+    | TExpConstruct(_, _, TExpConstrRecord(args)) =>
+      iter_record_fields(args)
     | TExpArrayGet(a1, a2) =>
       iter_expression(a1);
       iter_expression(a2);
-    | TExpArraySet(a1, a2, a3) =>
+    | TExpArraySet({array: a1, index: a2, value: a3, infix_op: a4}) =>
       iter_expression(a1);
       iter_expression(a2);
       iter_expression(a3);
+      Option.iter(iter_expression, a4);
     | TExpIf(c, t, f) =>
       iter_expression(c);
       iter_expression(t);
@@ -250,6 +262,7 @@ module MakeIterator =
       iter_expression(b);
     | TExpContinue
     | TExpBreak => ()
+    | TExpReturn(e) => Option.iter(iter_expression, e)
     };
     Iter.leave_expression(exp);
   };
@@ -261,7 +274,7 @@ module DefaultIteratorArgument: IteratorArgument = {
   let enter_expression = _ => ();
   let enter_core_type = _ => ();
   let enter_toplevel_stmt = _ => ();
-  let enter_bindings = (_, _, _) => ();
+  let enter_bindings = (_, _) => ();
   let enter_binding = _ => ();
   let enter_data_declaration = _ => ();
   let enter_data_declarations = () => ();
@@ -272,7 +285,7 @@ module DefaultIteratorArgument: IteratorArgument = {
   let leave_core_type = _ => ();
   let leave_toplevel_stmt = _ => ();
   let leave_binding = _ => ();
-  let leave_bindings = (_, _, _) => ();
+  let leave_bindings = (_, _) => ();
   let leave_data_declaration = _ => ();
   let leave_data_declarations = () => ();
 };

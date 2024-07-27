@@ -1,131 +1,249 @@
-import WasmI32 from "runtime/unsafe/wasmi32"
-import WasmF32 from "runtime/unsafe/wasmf32"
-import Memory from "runtime/unsafe/memory"
-import {
-  newFloat32
-} from "runtime/dataStructures"
+/**
+ * Utilities for working with the Float32 type.
+ *
+ * @example from "float32" include Float32
+ *
+ * @example 4.0f
+ * @example -4.0f
+ * @example Infinityf
+ * @example NaNf
+ *
+ * @since v0.2.0
+ */
+module Float32
 
-import {
+from "runtime/unsafe/wasmi32" include WasmI32
+from "runtime/unsafe/wasmf32" include WasmF32
+use WasmF32.{ (+), (-), (*), (/), (<), (<=), (>), (>=) }
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ newFloat32 }
+
+from "runtime/numbers" include Numbers
+use Numbers.{
   coerceNumberToFloat32 as fromNumber,
-  coerceFloat32ToNumber as toNumber
-} from "runtime/numbers"
-
-export fromNumber
-export toNumber
-
-
-@disableGC
-export let rec add = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat32(WasmF32.add(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(add))
-  ret
+  coerceFloat32ToNumber as toNumber,
 }
 
-@disableGC
-export let rec sub = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat32(WasmF32.sub(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(sub))
-  ret
+@unsafe
+let _VALUE_OFFSET = 4n
+
+/**
+ * Infinity represented as a Float32 value.
+ * This is an alternative to the `Infinityf` literal.
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let infinity = Infinityf
+
+/**
+ * NaN (Not a Number) represented as a Float32 value.
+ * This is an alternative to the `NaNf` literal.
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let nan = NaNf
+
+/**
+ * Pi represented as a Float32 value.
+ *
+ * @since v0.5.2
+ */
+provide let pi = 3.1415927f
+
+/**
+ * Tau represented as a Float32 value.
+ *
+ * @since v0.5.2
+ */
+provide let tau = 6.2831853f
+
+/**
+ * Euler's number represented as a Float32 value.
+ *
+ * @since v0.5.2
+ */
+provide let e = 2.7182817f
+
+provide { fromNumber, toNumber }
+
+/**
+ * Computes the sum of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The sum of the two operands
+ *
+ * @example
+ * use Float32.{ (+) }
+ * assert 1.0f + 1.0f == 2.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `add`
+ */
+@unsafe
+provide let (+) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newFloat32(xv + yv)
+  WasmI32.toGrain(ptr): Float32
 }
 
-@disableGC
-export let rec mul = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat32(WasmF32.mul(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(mul))
-  ret
+/**
+ * Computes the difference of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The difference of the two operands
+ *
+ * @example
+ * use Float32.{ (-) }
+ * assert 1.0f - 1.0f == 0.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `sub`
+ */
+@unsafe
+provide let (-) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newFloat32(xv - yv)
+  WasmI32.toGrain(ptr): Float32
 }
 
-@disableGC
-export let rec div = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat32(WasmF32.div(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(div))
-  ret
+/**
+ * Computes the product of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The product of the two operands
+ *
+ * @example
+ * use Float32.{ (*) }
+ * assert 2.0f * 2.0f == 4.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `mul`
+ */
+@unsafe
+provide let (*) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newFloat32(xv * yv)
+  WasmI32.toGrain(ptr): Float32
 }
 
-
-// Float32 comparisons
-@disableGC
-export let rec lt = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF32.lt(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lt))
-  ret
+/**
+ * Computes the quotient of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The quotient of the two operands
+ *
+ * @example
+ * use Float32.{ (/) }
+ * assert 10.0f / 4.0f == 2.5f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `div`
+ */
+@unsafe
+provide let (/) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newFloat32(xv / yv)
+  WasmI32.toGrain(ptr): Float32
 }
 
-@disableGC
-export let rec gt = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF32.gt(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gt))
-  ret
+/**
+ * Checks if the first value is less than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than the second value or `false` otherwise
+ *
+ * @example
+ * use Float32.{ (<) }
+ * assert 1.0f < 2.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lt`
+ */
+@unsafe
+provide let (<) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv < yv
 }
 
-@disableGC
-export let rec lte = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF32.le(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lte))
-  ret
+/**
+ * Checks if the first value is greater than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than the second value or `false` otherwise
+ *
+ * @example
+ * use Float32.{ (>) }
+ * assert 2.0f > 1.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gt`
+ */
+@unsafe
+provide let (>) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv > yv
 }
 
-@disableGC
-export let rec gte = (x: Float32, y: Float32) => {
-  let xv = WasmF32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmF32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF32.ge(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gte))
-  ret
+/**
+ * Checks if the first value is less than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than or equal to the second value or `false` otherwise
+ *
+ * @example
+ * use Float32.{ (<=) }
+ * assert -1.0f <= 1.0f
+ *
+ * @example
+ * use Float32.{ (<=) }
+ * assert -2.0f <= -2.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lte`
+ */
+@unsafe
+provide let (<=) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv <= yv
 }
 
-// floating-point constants:
-
-@disableGC
-let rec makeInfinity = () => {
-  let ptr = newFloat32(WasmF32.reinterpretI32(0b01111111100000000000000000000000n))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(makeInfinity))
-  ret
+/**
+ * Checks if the first value is greater than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than or equal to the second value or `false` otherwise
+ *
+ * @example
+ * use Float32.{ (>=) }
+ * assert 4.0f >= 1.0f
+ *
+ * @example
+ * use Float32.{ (>=) }
+ * assert 3.0f >= 3.0f
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gte`
+ */
+@unsafe
+provide let (>=) = (x: Float32, y: Float32) => {
+  let xv = WasmF32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmF32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv >= yv
 }
-
-export let infinity = makeInfinity()
-
-@disableGC
-let rec makeNaN = () => {
-  let ptr = newFloat32(WasmF32.reinterpretI32(0b01111111100000000000000000000001n))
-  let ret = WasmI32.toGrain(ptr) : Float32
-  Memory.decRef(WasmI32.fromGrain(makeNaN))
-  ret
-}
-
-export let nan = makeNaN()

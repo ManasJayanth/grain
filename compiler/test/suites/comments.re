@@ -8,28 +8,31 @@ describe("comments", ({test}) => {
   let assertCompileError = makeCompileErrorRunner(test);
   let assertParse = makeParseRunner(test);
 
-  let str = s => Top.expr @@ Exp.constant(Const.string(s));
-
   assertParse(
     "comment_parse_1",
-    "// Test\n\"foo\"",
+    "// Test\nmodule Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Line({
           cmt_content: "Test",
-          cmt_source: "// Test\n",
+          cmt_source: "// Test",
           cmt_loc: Location.dummy_loc,
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_2",
-    "/* Test */\"foo\"",
+    "/* Test */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Block({
           cmt_content: "Test",
@@ -38,13 +41,16 @@ describe("comments", ({test}) => {
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_block_multiline_trim",
-    "/* Test\n    Weird indent\n  Normal indent */\"foo\"",
+    "/* Test\n    Weird indent\n  Normal indent */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Block({
           cmt_content: "Test\nWeird indent\nNormal indent",
@@ -53,13 +59,16 @@ describe("comments", ({test}) => {
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_block_multiline_trim2",
-    "/* Test\r\n    Weird indent\r\n  Normal indent */\"foo\"",
+    "/* Test\r\n    Weird indent\r\n  Normal indent */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Block({
           cmt_content: "Test\nWeird indent\nNormal indent",
@@ -68,13 +77,16 @@ describe("comments", ({test}) => {
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_3",
-    "/** Test */\"foo\"",
+    "/** Test */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Doc({
           cmt_content: "Test",
@@ -83,58 +95,89 @@ describe("comments", ({test}) => {
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
-    "comment_parse_doc_multiline_trim",
-    "/** Test\n    Weird indent\n  Normal indent */\"foo\"",
+    "comment_parse_doc_multiline_trim_all_same_indent",
+    "/**\n  Test\n  Weird indent\n  Normal indent */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Doc({
           cmt_content: "Test\nWeird indent\nNormal indent",
+          cmt_source: "/**\n  Test\n  Weird indent\n  Normal indent */",
+          cmt_loc: Location.dummy_loc,
+        }),
+      ],
+      prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
+    },
+  );
+  assertParse(
+    "comment_parse_doc_multiline_trim_keeps_differnt_indent",
+    "/** Test\n    Weird indent\n  Normal indent */module Test",
+    {
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
+      comments: [
+        Parsetree.Doc({
+          cmt_content: "Test\n   Weird indent\n Normal indent",
           cmt_source: "/** Test\n    Weird indent\n  Normal indent */",
           cmt_loc: Location.dummy_loc,
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
-    "comment_parse_doc_multiline_trim2",
-    "/** Test\r\n    Weird indent\r\n  Normal indent */\"foo\"",
+    "comment_parse_doc_multiline_trim_normalizes_tabs",
+    // Note: There are explicit tab characters in this string to test them
+    "/**\n		Test\r\n	 Weird indent\r\n  Normal indent */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Doc({
           cmt_content: "Test\nWeird indent\nNormal indent",
-          cmt_source: "/** Test\r\n    Weird indent\r\n  Normal indent */",
+          cmt_source: "/**\n		Test\r\n	 Weird indent\r\n  Normal indent */",
           cmt_loc: Location.dummy_loc,
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_4",
-    "#!/bin/grain\n\"foo\"",
+    "#!/bin/grain\nmodule Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Shebang({
           cmt_content: "/bin/grain",
-          cmt_source: "#!/bin/grain\n",
+          cmt_source: "#!/bin/grain",
           cmt_loc: Location.dummy_loc,
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_block_deasterisk",
-    "/* Test\n* no space before\n * space before\n  * tab before\n *no space after */\"foo\"",
+    "/* Test\n* no space before\n * space before\n  * tab before\n *no space after */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Block({
           cmt_content: "Test\nno space before\nspace before\ntab before\nno space after",
@@ -143,21 +186,43 @@ describe("comments", ({test}) => {
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertParse(
     "comment_parse_doc_deasterisk",
-    "/** Test\n* no space before\n * space before\n  * tab before\n *no space after */\"foo\"",
+    "/** Test\n* no space before\n * space before\n  * tab before\n *no space after */module Test",
     {
-      statements: [str("foo")],
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
       comments: [
         Parsetree.Doc({
-          cmt_content: "Test\nno space before\nspace before\ntab before\nno space after",
+          cmt_content: " Test\n no space before\n space before\n tab before\nno space after",
           cmt_source: "/** Test\n* no space before\n * space before\n  * tab before\n *no space after */",
           cmt_loc: Location.dummy_loc,
         }),
       ],
       prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
+    },
+  );
+  assertParse(
+    "comment_parse_doc_deasterisk2",
+    "/** Test\n* no space before\n * space before\n  * tab before\n * trailing space after */module Test",
+    {
+      attributes: [],
+      module_name: Location.mknoloc("Test"),
+      statements: [],
+      comments: [
+        Parsetree.Doc({
+          cmt_content: "Test\nno space before\nspace before\ntab before\ntrailing space after",
+          cmt_source: "/** Test\n* no space before\n * space before\n  * tab before\n * trailing space after */",
+          cmt_loc: Location.dummy_loc,
+        }),
+      ],
+      prog_loc: Location.dummy_loc,
+      prog_core_loc: Location.dummy_loc,
     },
   );
   assertCompileError(

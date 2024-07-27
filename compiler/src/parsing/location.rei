@@ -20,6 +20,10 @@ type t =
 
 let dummy_loc: t;
 
+/** The first position of any program */
+
+let start_pos: Lexing.position;
+
 /** Return an empty ghost range located in a given file. */
 
 let in_file: string => t;
@@ -31,7 +35,8 @@ let init: (Lexing.lexbuf, string) => unit;
 
 /** Get the location of the current token from the [lexbuf]. */
 
-let curr: Lexing.lexbuf => t;
+let curr: Sedlexing.lexbuf => t;
+let of_positions: (Lexing.position, Lexing.position) => t;
 
 let symbol_rloc: unit => t;
 let symbol_gloc: unit => t;
@@ -78,6 +83,7 @@ let printer: ref((formatter, t) => unit);
 
 /** The type for location-tagged values. */
 
+[@deriving (sexp, yojson)]
 type loc('a) = {
   /** The tagged value*/
   txt: 'a,
@@ -97,7 +103,7 @@ let mkloc: ('a, t) => loc('a);
 /** Support for located errors */;
 
 type error = {
-  loc: t,
+  error_loc: t,
   msg: string,
   sub: list(error),
   if_highlight: string /* alternative message if locations are highlighted */

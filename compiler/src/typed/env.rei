@@ -14,8 +14,7 @@ type summary =
   | Env_module(summary, Ident.t, module_declaration)
   | Env_modtype(summary, Ident.t, modtype_declaration)
   | Env_open(summary, Path.t)
-  | Env_constraints(summary, PathMap.t(type_declaration))
-  | Env_copy_types(summary, list(string));
+  | Env_constraints(summary, PathMap.t(type_declaration));
 
 type type_descriptions = (
   list(constructor_description),
@@ -31,13 +30,16 @@ type dependency_chain = list(Location.loc(string));
 type error =
   | Illegal_renaming(string, string, string)
   | Inconsistent_import(string, string, string)
-  | Need_recursive_types(string, string)
   | Depend_on_unsafe_string_unit(string, string)
   | Missing_module(Location.t, Path.t, Path.t)
   | Unbound_module(Location.t, string)
   | Unbound_label(Location.t, string)
+  | Unbound_label_with_alt(Location.t, string, string)
   | No_module_file(string, option(string))
   | Value_not_found_in_module(Location.t, string, string)
+  | Module_not_found_in_module(Location.t, string, string, option(string))
+  | Type_not_found_in_module(Location.t, string, string)
+  | Exception_not_found_in_module(Location.t, string, string)
   | Illegal_value_name(Location.t, string)
   | Cyclic_dependencies(string, dependency_chain);
 
@@ -62,6 +64,8 @@ let without_cmis: ('a => 'b, 'a) => 'b;
 let find_value: (Path.t, t) => value_description;
 let find_type: (Path.t, t) => type_declaration;
 let find_type_descrs: (Path.t, t) => type_descriptions;
+let find_constructor: (Path.t, t) => constructor_description;
+let find_module_chain: (Path.t, t) => list(module_declaration);
 let find_module: (Path.t, option(string), t) => module_declaration;
 let find_modtype: (Path.t, t) => modtype_declaration;
 
@@ -81,6 +85,8 @@ let normalize_path: (option(Location.t), t, Path.t) => Path.t;
 let normalize_path_prefix: (option(Location.t), t, Path.t) => Path.t;
 
 let has_local_constraints: t => bool;
+
+let load_pers_struct: (~loc: Location.t, string) => string;
 
 /* By-identifier lookups */
 /** Looks up the value associated with the given identifier. */
@@ -120,9 +126,6 @@ let lookup_modtype:
   (~loc: Location.t=?, ~mark: bool=?, Identifier.t, t) =>
   (Path.t, modtype_declaration);
 
-let copy_types: (list(string), t) => t;
-/* Used only in Typecore.duplicate_ident_types. */
-
 /* By-identifier insertions */
 /** Adds a value identifier with the given name and description. */
 
@@ -146,7 +149,8 @@ let add_constructor: (Ident.t, constructor_description, t) => t;
 
 /** Adds a constructor with the given name and description. */
 
-let add_module: (~arg: bool=?, Ident.t, module_type, option(string), t) => t;
+let add_module:
+  (~arg: bool=?, Ident.t, module_type, option(string), Location.t, t) => t;
 let add_module_declaration:
   (~arg: bool=?, ~check: bool, Ident.t, module_declaration, t) => t;
 let add_modtype: (Ident.t, modtype_declaration, t) => t;
@@ -158,45 +162,29 @@ let add_local_type: (Path.t, type_declaration, t) => t;
 let add_item: (signature_item, t) => t;
 let add_signature: (signature, t) => t;
 
-/* Remember the current compilation unit: modname * filename * compilation mode. */
-type compilation_mode =
-  | Normal
-  | Runtime;
-
-let set_unit: ((string, string, compilation_mode)) => unit;
-let get_unit: unit => (string, string, compilation_mode);
+let set_unit: ((string, string, Grain_utils.Config.compilation_mode)) => unit;
+let get_unit: unit => (string, string, Grain_utils.Config.compilation_mode);
 let is_runtime_mode: unit => bool;
 
-/* Insertion of all fields of a signature, relative to the given path.
-   Used to implement open. Returns None if the path refers to a functor,
-   not a structure. */
-let open_signature:
-  (
-    ~used_slot: ref(bool)=?,
-    ~toplevel: bool=?,
-    Path.t,
-    Identifier.t,
-    import_declaration,
-    t
-  ) =>
-  option(t);
-/* Similar to [open_signature], except that modules from the load path
-      have precedence over sub-modules of the opened module.
-      For instance, if opening a module [M] with a sub-module [X]:
-      - if the load path contains a [x.cmi] file, then resolving [X] in the
-        new environment yields the same result as resolving [X] in the
-        old environment
-      - otherwise, in the new environment [X] resolves to [M.X]
-   */
-let open_signature_of_initially_opened_module:
-  (~loc: Location.t=?, Path.t, option(string), t) => option(t);
+/* Insertion of a module */
+let include_module: (Identifier.t, include_declaration, t) => t;
 
-/* Read, save a signature to/from a file */
+let use_partial_signature:
+  (Path.t, list(Parsetree.use_item), t) => (t, list(use_item));
+let use_full_signature: (Path.t, t) => t;
 
-let read_signature: string => signature;
+let use_full_signature_of_initially_included_module: (Path.t, t) => t;
+
 /* Arguments: module name, file name. Results: signature. */
 let build_signature:
-  (~deprecated: string=?, signature, string, string) => Cmi_format.cmi_infos;
+  (
+    ~deprecated: string=?,
+    signature,
+    string,
+    string,
+    Cmi_format.cmi_type_metadata
+  ) =>
+  Cmi_format.cmi_infos;
 /* Arguments: signature, module name, file name. */
 let build_signature_with_imports:
   (
@@ -204,7 +192,8 @@ let build_signature_with_imports:
     signature,
     string,
     string,
-    list((string, option(Digest.t)))
+    list((string, Digest.t)),
+    Cmi_format.cmi_type_metadata
   ) =>
   Cmi_format.cmi_infos;
 /* Arguments: signature, module name, file name,
@@ -216,7 +205,7 @@ let crc_of_unit: string => Digest.t;
 
 /* Return the set of compilation units imported, with their CRC */
 
-let imports: unit => list((string, option(Digest.t)));
+let imports: unit => list((string, Digest.t));
 
 /* [is_imported_opaque md] returns true if [md] is an opaque imported module  */
 let is_imported_opaque: string => bool;
@@ -275,6 +264,8 @@ let fold_types:
     'a
   ) =>
   'a;
+let fold_labels:
+  ((label_description, 'a) => 'a, option(Identifier.t), t, 'a) => 'a;
 /** Persistent structures are only traversed if they are already loaded. */
 
 let fold_constructors:
@@ -313,7 +304,7 @@ module Persistent_signature: {
       the .cmi file in the load path. This function can be overridden to load
       it from memory, for instance to build a self-contained toplevel. */
 
-  let load: ref((~loc: Location.t=?, ~unit_name: string) => option(t));
+  let load: ref((~loc: Location.t=?, string) => option(t));
 };
 
 /* Summaries -- compact representation of an environment, to be

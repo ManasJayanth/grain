@@ -156,8 +156,49 @@ type wasm_op =
     | Op_gt_float64
     | Op_ge_float64;
 
+type prim0 =
+  Parsetree.prim0 =
+    | AllocateInt32
+    | AllocateInt64
+    | AllocateUint32
+    | AllocateUint64
+    | AllocateFloat32
+    | AllocateFloat64
+    | AllocateRational
+    | WasmMemorySize
+    | Unreachable
+    | HeapStart
+    | HeapTypeMetadata;
+
 type prim1 =
   Parsetree.prim1 =
+    | AllocateArray
+    | AllocateTuple
+    | AllocateBytes
+    | AllocateString
+    | AllocateBigInt
+    | NewInt32
+    | NewInt64
+    | NewUint32
+    | NewUint64
+    | NewFloat32
+    | NewFloat64
+    | BuiltinId
+    | LoadAdtVariant
+    | StringSize
+    | BytesSize
+    | TagSimpleNumber
+    | UntagSimpleNumber
+    | TagChar
+    | UntagChar
+    | TagInt8
+    | UntagInt8
+    | TagInt16
+    | UntagInt16
+    | TagUint8
+    | UntagUint8
+    | TagUint16
+    | UntagUint16
     | Not
     | Box
     | Unbox
@@ -167,6 +208,7 @@ type prim1 =
     | ArrayLength
     | Assert
     | Throw
+    | Magic
     | WasmFromGrain
     | WasmToGrain
     | WasmUnaryI32({
@@ -193,6 +235,7 @@ type prim1 =
 
 type prim2 =
   Parsetree.prim2 =
+    | NewRational
     | Is
     | Eq
     | And
@@ -236,8 +279,12 @@ type primn =
     | WasmStoreF64
     | WasmMemoryCopy
     | WasmMemoryFill
-    | WasmMemorySize
     | WasmMemoryCompare;
+
+let (prim0_of_sexp, sexp_of_prim0) = (
+  Parsetree.prim0_of_sexp,
+  Parsetree.sexp_of_prim0,
+);
 
 let (prim1_of_sexp, sexp_of_prim1) = (
   Parsetree.prim1_of_sexp,
@@ -284,8 +331,15 @@ type comp_expression = {
 }
 
 [@deriving sexp]
+and closure_status =
+  | Uncomputed
+  | Precomputed(list(Ident.t))
+  | Unnecessary
+
+[@deriving sexp]
 and comp_expression_desc =
   | CImmExpr(imm_expression)
+  | CPrim0(prim0)
   | CPrim1(prim1, imm_expression)
   | CPrim2(prim2, imm_expression, imm_expression)
   | CPrimN(primn, list(imm_expression))
@@ -296,8 +350,17 @@ and comp_expression_desc =
   | CArray(list(imm_expression))
   | CArrayGet(imm_expression, imm_expression)
   | CArraySet(imm_expression, imm_expression, imm_expression)
-  | CRecord(imm_expression, list((loc(string), imm_expression)))
-  | CAdt(imm_expression, imm_expression, list(imm_expression))
+  | CRecord(
+      imm_expression,
+      imm_expression,
+      list((option(loc(string)), imm_expression)),
+    )
+  | CAdt(
+      imm_expression,
+      imm_expression,
+      imm_expression,
+      list(imm_expression),
+    )
   | CGetTupleItem(int32, imm_expression)
   | CSetTupleItem(int32, imm_expression, imm_expression)
   | CGetAdtItem(int32, imm_expression)
@@ -308,29 +371,31 @@ and comp_expression_desc =
   | CFor(option(anf_expression), option(anf_expression), anf_expression)
   | CContinue
   | CBreak
+  | CReturn(option(imm_expression))
   | CSwitch(imm_expression, list((int, anf_expression)), partial)
   | CApp(
       (imm_expression, (list(allocation_type), allocation_type)),
       list(imm_expression),
       bool,
     )
-  | CAppBuiltin(string, string, list(imm_expression))
   | CLambda(
       option(string),
       list((Ident.t, allocation_type)),
       (anf_expression, allocation_type),
+      closure_status,
     )
   | CBytes(bytes)
   | CString(string)
-  | CChar(string)
   | CNumber(Asttypes.number_type)
   | CInt32(int32)
   | CInt64(int64)
+  | CUint32(int32)
+  | CUint64(int64)
   | CFloat32(float)
   | CFloat64(float)
 
-/** Compound expressions (possibly let-bound)
-    TODO: better name */
+/** Compound expressions (possibly let-bound) */
+// TODO: better name
 
 [@deriving sexp]
 and anf_expression = {
@@ -356,15 +421,18 @@ and anf_expression_desc =
 
 [@deriving sexp]
 type import_shape =
-  | FunctionShape(list(allocation_type), list(allocation_type))
+  | FunctionShape({
+      args: list(allocation_type),
+      returns: list(allocation_type),
+      has_closure: bool,
+    })
   | GlobalShape(allocation_type);
 
 [@deriving sexp]
 type import_desc =
   | GrainValue(string, string)
   | WasmFunction(string, string)
-  | WasmValue(string, string)
-  | JSFunction(string, string);
+  | WasmValue(string, string);
 
 [@deriving sexp]
 type import_spec = {
@@ -376,10 +444,16 @@ type import_spec = {
 };
 
 [@deriving sexp]
+type imports = {
+  specs: list(import_spec),
+  path_map: Path_tbl.t(Ident.t),
+};
+
+[@deriving sexp]
 type anf_program = {
   body: anf_expression,
   env: [@sexp.opaque] Env.t,
-  imports: list(import_spec),
+  imports,
   signature: Cmi_format.cmi_infos,
   type_metadata: list(type_metadata),
   analyses: [@sexp.opaque] ref(list(analysis)),
@@ -387,6 +461,7 @@ type anf_program = {
 
 type anf_bind =
   | BSeq(comp_expression)
-  | BLet(Ident.t, comp_expression)
-  | BLetRec(list((Ident.t, comp_expression)))
-  | BLetExport(rec_flag, list((Ident.t, comp_expression)));
+  | BLet(Ident.t, comp_expression, global_flag)
+  | BLetMut(Ident.t, comp_expression, global_flag)
+  | BLetRec(list((Ident.t, comp_expression)), global_flag)
+  | BLetRecMut(list((Ident.t, comp_expression)), global_flag);

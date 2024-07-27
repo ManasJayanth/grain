@@ -1,37 +1,24 @@
 open Grain_tests.TestFramework;
 open Grain_tests.Runner;
+open Grain_tests.Test_utils;
 open Grain_parsing.Location;
 open Grain_middle_end.Anf_helper;
 
-describe("chars", ({test}) => {
+describe("chars", ({test, testSkip}) => {
+  let test_or_skip =
+    Sys.backend_type == Other("js_of_ocaml") ? testSkip : test;
+
   let assertSnapshot = makeSnapshotRunner(test);
   let assertCompileError = makeCompileErrorRunner(test);
-  let assertRun = makeRunner(test);
+  let assertRun = makeRunner(test_or_skip);
   let assertParseWithLocs = makeParseRunner(~keep_locs=true, test);
   open Grain_parsing;
   open Ast_helper;
-  let mk_loc =
-      (
-        file,
-        (start_line, start_col, start_bol),
-        (end_line, end_col, end_bol),
-      ) => {
-    loc_start: {
-      pos_fname: file,
-      pos_lnum: start_line,
-      pos_bol: start_bol,
-      pos_cnum: start_col,
-    },
-    loc_end: {
-      pos_fname: file,
-      pos_lnum: end_line,
-      pos_bol: end_bol,
-      pos_cnum: end_col,
-    },
-    loc_ghost: false,
+  let char = (~loc=?, s) => {
+    let loc = Option.value(~default=Location.dummy_loc, loc);
+    Toplevel.expr(~loc) @@
+    Expression.constant(~loc, ~core_loc=loc, Constant.char({txt: s, loc}));
   };
-  let char = (~loc=?, s) =>
-    Top.expr(~loc?) @@ Exp.constant(~loc?, Const.char(s));
 
   assertRun("char1", "print('A')", "A\n");
   assertSnapshot("char2", "'\\x41'");
@@ -45,28 +32,44 @@ describe("chars", ({test}) => {
   assertRun("char_eq2", "print('🌾' == '💯')", "false\n");
   assertRun(
     "char_eq3",
-    "import Char from \"char\"; print(Char.fromCode(0x1F33E) == '🌾')",
+    "from \"char\" include Char; print(Char.fromCode(0x1F33E) == '🌾')",
     "true\n",
   );
   assertRun(
     "char_eq4",
-    "import Char from \"char\"; print(Char.fromCode(0x1F33E) == '💯')",
+    "from \"char\" include Char; print(Char.fromCode(0x1F33E) == '💯')",
     "false\n",
   );
-  assertRun("char_toString_escape1", {|print(('\\',))|}, "('\\\\',)\n");
-  assertRun("char_toString_escape2", {|print(('\b',))|}, "('\\b',)\n");
-  assertRun("char_toString_escape3", {|print(('\f',))|}, "('\\f',)\n");
-  assertRun("char_toString_escape4", {|print(('\n',))|}, "('\\n',)\n");
+  assertRun("char_toString_escape1", {|print(('\\', 1))|}, "('\\\\', 1)\n");
+  assertRun("char_toString_escape2", {|print(('\b', 1))|}, "('\\b', 1)\n");
+  assertRun("char_toString_escape3", {|print(('\f', 1))|}, "('\\f', 1)\n");
+  assertRun("char_toString_escape4", {|print(('\n', 1))|}, "('\\n', 1)\n");
   assertRun("char_toString_escape5", {|print(('
-',))|}, "('\\n',)\n");
-  assertRun("char_toString_escape6", {|print(('\r',))|}, "('\\r',)\n");
-  assertRun("char_toString_escape7", {|print(('\t',))|}, "('\\t',)\n");
-  assertRun("char_toString_escape8", {|print(('\v',))|}, "('\\v',)\n");
-  assertRun("char_toString_escape9", {|print(('\'',))|}, "('\\'',)\n");
+', 1))|}, "('\\n', 1)\n");
+  assertRun("char_toString_escape6", {|print(('\r', 1))|}, "('\\r', 1)\n");
+  assertRun("char_toString_escape7", {|print(('\t', 1))|}, "('\\t', 1)\n");
+  assertRun("char_toString_escape8", {|print(('\v', 1))|}, "('\\v', 1)\n");
+  assertRun("char_toString_escape9", {|print(('\'', 1))|}, "('\\'', 1)\n");
   assertCompileError(
-    "char_illegal",
+    "char_illegal1",
     "'abc'",
-    "This character literal contains multiple characters: 'abc'\nDid you mean to create the string \"abc\" instead?",
+    "Character literals cannot contain multiple characters: 'abc'\nDid you mean to create the string \"abc\" instead?",
+  );
+  assertCompileError(
+    "char_illegal2",
+    {|'{"test": 1}'|},
+    {|Character literals cannot contain multiple characters: '\{"test": 1\}'
+Did you mean to create the string "\{\\"test\\": 1\}" instead?|},
+  );
+  assertCompileError(
+    "char_illegal3",
+    "''",
+    "Character literals must contain a character. Did you mean to create an empty string \"\" instead?",
+  );
+  assertCompileError(
+    "char_illegal_pattern",
+    "match ('a') { 'abc' => void, _ => void }",
+    "Character literals cannot contain multiple characters: 'abc'\nDid you mean to create the string \"abc\" instead?",
   );
   assertCompileError(
     "unicode_err1",
@@ -86,36 +89,68 @@ describe("chars", ({test}) => {
   // parse locations
   assertParseWithLocs(
     "char_loc_simple",
-    "'a'",
+    "module Test\n'a'",
     {
+      attributes: [],
+      module_name:
+        Location.mkloc(
+          "Test",
+          mk_loc("char_loc_simple", (1, 7, 0), (1, 11, 0)),
+        ),
       statements: [
-        char(~loc=mk_loc("char_loc_simple", (1, 0, 0), (1, 3, 0)), "a"),
+        char(
+          ~loc=mk_loc("char_loc_simple", (2, 12, 12), (2, 15, 12)),
+          ~core_loc=mk_loc("char_loc_simple", (2, 12, 12), (2, 15, 12)),
+          "\'a\'",
+        ),
       ],
       comments: [],
-      prog_loc: mk_loc("char_loc_simple", (1, 0, 0), (1, 3, 0)),
+      prog_loc: mk_loc("char_loc_simple", (1, 0, 0), (2, 15, 12)),
+      prog_core_loc: mk_loc("char_loc_simple", (1, 0, 0), (2, 15, 12)),
     },
   );
   assertParseWithLocs(
     "char_loc_code",
-    "'\\u{1F3F4}'",
+    "module Test\n'\\u{1F3F4}'",
     {
+      attributes: [],
+      module_name:
+        Location.mkloc(
+          "Test",
+          mk_loc("char_loc_code", (1, 7, 0), (1, 11, 0)),
+        ),
       statements: [
-        char(~loc=mk_loc("char_loc_code", (1, 0, 0), (1, 11, 0)), "🏴"),
+        char(
+          ~loc=mk_loc("char_loc_code", (2, 12, 12), (2, 23, 12)),
+          ~core_loc=mk_loc("char_loc_code", (2, 12, 12), (2, 23, 12)),
+          "\'\\u{1F3F4}\'",
+        ),
       ],
       comments: [],
-      prog_loc: mk_loc("char_loc_code", (1, 0, 0), (1, 11, 0)),
+      prog_loc: mk_loc("char_loc_code", (1, 0, 0), (2, 23, 12)),
+      prog_core_loc: mk_loc("char_loc_code", (1, 0, 0), (2, 23, 12)),
     },
   );
-  // note that the char length is calculated as having 4 bytes, not 1 codepoint
   assertParseWithLocs(
     "char_loc_emoji",
-    "'💯'",
+    "module Test\n'💯'",
     {
+      attributes: [],
+      module_name:
+        Location.mkloc(
+          "Test",
+          mk_loc("char_loc_emoji", (1, 7, 0), (1, 11, 0)),
+        ),
       statements: [
-        char(~loc=mk_loc("char_loc_emoji", (1, 0, 0), (1, 6, 0)), "💯"),
+        char(
+          ~loc=mk_loc("char_loc_emoji", (2, 12, 12), (2, 15, 12)),
+          ~core_loc=mk_loc("char_loc_emoji", (2, 12, 12), (2, 15, 12)),
+          "\'💯\'",
+        ),
       ],
       comments: [],
-      prog_loc: mk_loc("char_loc_emoji", (1, 0, 0), (1, 6, 0)),
+      prog_loc: mk_loc("char_loc_emoji", (1, 0, 0), (2, 15, 12)),
+      prog_core_loc: mk_loc("char_loc_emoji", (1, 0, 0), (2, 15, 12)),
     },
   );
 });

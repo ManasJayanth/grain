@@ -15,20 +15,35 @@ module CSVArg: Anf_iterator.IterArgument = {
     switch (desc) {
     | CLambda(_) =>
       closure_scoped_vars :=
-        Ident.Set.union(closure_scoped_vars^, Anf_utils.comp_free_vars(c))
+        Ident.Set.union(
+          closure_scoped_vars^,
+          Analyze_free_vars.comp_free_vars(c),
+        )
     | _ => ()
     };
 
-  let leave_anf_expression = ({anf_desc: desc}) => {
-    switch (desc) {
-    | AELet(Global, _, _, binds, _) =>
-      /* Assume that all globals are closure scope, since globals could
-         appear in a closure scope in another module */
-      let ids = List.map(fst, binds);
-      closure_scoped_vars :=
-        Ident.Set.union(closure_scoped_vars^, Ident.Set.of_list(ids));
-    | _ => ()
-    };
+  let leave_anf_program = ({signature: {cmi_sign}}) => {
+    let rec process_sig =
+      Types.(
+        fun
+        | TSigValue(_, {val_fullpath: PIdent(id)})
+        | TSigTypeExt(_, {ext_name: id}, _) =>
+          closure_scoped_vars := Ident.Set.add(id, closure_scoped_vars^)
+        | TSigType(_, {type_kind: TDataVariant(cds)}, _) =>
+          List.iter(
+            ({cd_id}) =>
+              closure_scoped_vars :=
+                Ident.Set.add(cd_id, closure_scoped_vars^),
+            cds,
+          )
+        | TSigType(_) => ()
+        | TSigValue(_) => failwith("NYI: external val_fullpath")
+        | TSigModule(_, {md_type: TModSignature(signature)}, _) =>
+          List.iter(process_sig, signature)
+        | TSigModule(_) => ()
+        | TSigModType(_) => failwith("NYI: module types in module signatures")
+      );
+    List.iter(process_sig, cmi_sign);
   };
 };
 

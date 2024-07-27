@@ -1,225 +1,83 @@
-name: Release
+name: Build
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    tags:        
+      - '**'
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  release-please:
-    name: Create Release
-    runs-on: ubuntu-latest
-    outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      upload_url: ${{ steps.release.outputs.upload_url }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      stdlib_upload_url: ${{ steps.release.outputs.stdlib--upload_url }}
-      stdlib_release_created: ${{ steps.release.outputs.stdlib--release_created }}
-      js-runner_upload_url: ${{ steps.release.outputs.js-runner--upload_url }}
-      js-runner_release_created: ${{ steps.release.outputs.js-runner--release_created }}
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest]
+        # os: [ubuntu-latest, macos-latest, windows-latest, macos-13]
     steps:
-      - uses: GoogleCloudPlatform/release-please-action@v2.33.1
-        id: release
+      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          command: manifest
+          fetch-depth: 1000
+          fetch-tags: false # https://github.com/actions/checkout/issues/1467
+          submodules: true
+      - run: git fetch --tags
+        name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
+        with:
+          working-directory: compiler
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+      # TODO
+      # - run: node .ci/validate-release-postinstall.js
+      #   name: "Validate release-postinstall.js"
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
+        if: ${{ runner.os != 'Linux' }}
+        id: prepare-npm-artifacts
+        with:
+          working-directory: compiler
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+          prepare-npm-artifacts-mode: true
 
-  prepare-artifacts:
-    needs: [release-please]
-    if: ${{ needs.release-please.outputs.release_created }}
-    name: Prepare artifacts
-    runs-on: ubuntu-latest
-    outputs:
-      stdlib_download_url: ${{ steps.stdlib-upload.outputs.browser_download_url }}
-      js-runner_download_url: ${{ steps.js-runner-upload.outputs.browser_download_url }}
+  bundle:
+    permissions:
+      contents: write
+    needs:
+      - build
+    runs-on: macos-latest
     steps:
-      # Many of these steps are the same as building the compiler for tests
-      - name: Setup Node.js
-        uses: actions/setup-node@v2.1.2
+      - uses: actions/setup-node@v4
         with:
-          node-version: "14"
-          check-latest: true
-
-      - name: Setup environment
-        run: |
-          yarn config set prefix $(npm config get prefix)
-          yarn global add shx
-
-      - name: Checkout project
-        uses: actions/checkout@v2
-
-      - name: Set up JS runner and CLI
-        run: |
-          yarn
-
-      - name: Esy setup
-        run: |
-          yarn compiler prepare
-
-      - name: Esy cache
-        id: esy-cache
-        uses: actions/cache@v2
+          registry-url: 'https://registry.npmjs.org'
+      - uses: actions/checkout@v4
         with:
-          path: compiler/_export
-          key: ${{ runner.os }}-esy-${{ hashFiles('compiler/esy.lock/index.json') }}
+          fetch-depth: 100
+          fetch-tags: false # https://github.com/actions/checkout/issues/1467
+          submodules: true
+      - run: git fetch --tags
+        name: Fetch tags manually as a workaround. See https://github.com/actions/checkout/issues/1467
+      - uses: esy/github-action@prometheansacrifice/absolute-working-directory
+        with:
+          source-cache-key: 20240713-1
+          cache-key: ${{ hashFiles('esy.lock/index.json') }}-20240713-1
+          bundle-npm-artifacts-mode: true
 
-      - name: Import esy cache
-        if: steps.esy-cache.outputs.cache-hit == 'true'
-        run: |
-          yarn compiler import-dependencies
-          shx rm -rf compiler/_export
+      - name: Create tarball
+        run: tar cf npm-release.tgz ./_npm-release
 
-      # Don't build grainc.exe, only the JS builds
-      # TODO(#589): Actually build the exe's these once users can install them locally
-      - name: Build compiler
-        run: |
-          yarn compiler build:js
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: npm-release.tgz
 
-      # This will log a warning because we removed the grainc.exe file
-      - name: Build Binaries
-        run: |
-          yarn cli build-pkg --target win-x64,mac-x64,linux-x64
-
-      - name: Upload Binary (Windows)
-        uses: actions/upload-release-asset@v1
+      - name: Publish to NPM registry
+        working-directory: _npm-release
+        if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/')
+        run: npm publish --tag=dev --access=public .
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release-please.outputs.upload_url }}
-          asset_path: ./pkg/grain-win.exe
-          asset_name: grain-win-x64.exe
-          asset_content_type: application/octet-stream
-
-      - name: Upload Binary (Mac)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release-please.outputs.upload_url }}
-          asset_path: ./pkg/grain-macos
-          asset_name: grain-mac-x64
-          asset_content_type: application/octet-stream
-
-      - name: Upload Binary (Linux)
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release-please.outputs.upload_url }}
-          asset_path: ./pkg/grain-linux
-          asset_name: grain-linux-x64
-          asset_content_type: application/octet-stream
-
-      - name: Pack stdlib
-        if: ${{ needs.release-please.outputs.stdlib_release_created }}
-        working-directory: ./stdlib
-        # Runs `npm pack` and assigns the filename to an env var we can use later
-        run: |
-          echo "STDLIB_TAR=$(npm pack --json | jq -r '.[0].filename')" >> $GITHUB_ENV
-
-      - name: Upload stdlib
-        id: stdlib-upload
-        if: ${{ needs.release-please.outputs.stdlib_release_created }}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release-please.outputs.stdlib_upload_url }}
-          asset_path: ./stdlib/${{ env.STDLIB_TAR }}
-          asset_name: stdlib.tgz
-          asset_content_type: application/octet-stream
-
-      - name: Pack js-runner
-        if: ${{ needs.release-please.outputs.js-runner_release_created }}
-        working-directory: ./js-runner
-        # Runs `npm pack` and assigns the filename to an env var we can use later
-        run: |
-          echo "RUNNER_TAR=$(npm pack --json | jq -r '.[0].filename')" >> $GITHUB_ENV
-
-      - name: Upload js-runner
-        id: js-runner-upload
-        if: ${{ needs.release-please.outputs.js-runner_release_created }}
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release-please.outputs.js-runner_upload_url }}
-          asset_path: ./js-runner/${{ env.RUNNER_TAR }}
-          asset_name: js-runner.tgz
-          asset_content_type: application/octet-stream
-
-  dispatch-website:
-    needs: [release-please, prepare-artifacts]
-    if: ${{ needs.release-please.outputs.release_created }}
-    name: Dispatch website release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: grain-lang/workflow-dispatch-action@v1.0.0
-        with:
-          workflow: Grain Release
-          token: ${{ secrets.WORKFLOW_TOKEN }}
-          ref: master
-          repo: grain-lang/grain-lang.org
-          tag_input: ${{ needs.release-please.outputs.tag_name }}
-
-  dispatch-homebrew:
-    needs: [release-please, prepare-artifacts]
-    if: ${{ needs.release-please.outputs.release_created }}
-    name: Dispatch homebrew release
-    runs-on: ubuntu-latest
-    steps:
-      - uses: grain-lang/workflow-dispatch-action@v1.0.0
-        with:
-          workflow: Grain Release
-          token: ${{ secrets.WORKFLOW_TOKEN }}
-          ref: main
-          repo: grain-lang/homebrew-tap
-          tag_input: ${{ needs.release-please.outputs.tag_name }}
-
-  dispatch-docker:
-    needs: [release-please, prepare-artifacts]
-    if: ${{ needs.release-please.outputs.release_created }}
-    name: Dispatch Docker builds
-    runs-on: ubuntu-latest
-    steps:
-      - uses: grain-lang/workflow-dispatch-action@v1.0.0
-        with:
-          workflow: Publish Docker images
-          token: ${{ secrets.WORKFLOW_TOKEN }}
-          ref: main
-          repo: grain-lang/grain
-          tag_input: ${{ needs.release-please.outputs.tag_name }}
-
-  npm-release-stdlib:
-    needs: [release-please, prepare-artifacts]
-    if: ${{ needs.release-please.outputs.stdlib_release_created }}
-    name: Publish stdlib to npm registry
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup NodeJS
-        uses: actions/setup-node@v2.1.2
-        with:
-          node-version: "14"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Publish to npm
-        run: |
-          npm publish ${{ needs.prepare-artifacts.outputs.stdlib_download_url }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_RELEASE }}
-
-  npm-release-js-runner:
-    needs: [release-please, prepare-artifacts]
-    if: ${{ needs.release-please.outputs.js-runner_release_created }}
-    name: Publish js-runner to npm registry
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup NodeJS
-        uses: actions/setup-node@v2.1.2
-        with:
-          node-version: "14"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Publish to npm
-        run: |
-          npm publish ${{ needs.prepare-artifacts.outputs.js-runner_download_url }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_RELEASE }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

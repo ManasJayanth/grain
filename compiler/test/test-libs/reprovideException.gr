@@ -1,0 +1,8 @@
+module ReprovideException
+
+from "./provideException.gr" include ProvideException
+use ProvideException.{ exception MyException, excVal1 }
+
+let excVal2 = ProvideException.MyException
+
+provide { exception MyException, excVal1, excVal2 }

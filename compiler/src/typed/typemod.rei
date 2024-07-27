@@ -5,6 +5,7 @@ open Typedtree;
 type error =
   | Cannot_apply(module_type)
   | Not_included(list(Includemod.error))
+  | Include_module_name_mismatch(string, string)
   | Cannot_eliminate_dependency(module_type)
   | Signature_expected
   | Structure_expected(module_type)
@@ -28,7 +29,8 @@ type error =
   | Scoping_pack(Identifier.t, type_expr)
   | Recursive_module_require_explicit_type
   | Apply_generative
-  | Cannot_scrape_alias(Path.t);
+  | Cannot_scrape_alias(Path.t)
+  | Nonrecursive_type_with_recursion(Identifier.t);
 
 exception Error(Location.t, Env.t, error);
 exception Error_forward(Location.error);

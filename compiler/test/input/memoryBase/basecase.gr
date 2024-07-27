@@ -1,0 +1,7 @@
+module BaseCase
+
+enum Thing {
+  HelloWorld,
+}
+
+print(HelloWorld)

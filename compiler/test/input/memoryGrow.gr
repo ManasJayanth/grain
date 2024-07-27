@@ -1,4 +1,6 @@
-import Array from "array"
+module MemoryGrow
+
+from "array" include Array
 
 let array = Array.init(1_000_000, i => (i, i + 1))
 

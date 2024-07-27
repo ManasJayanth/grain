@@ -42,7 +42,17 @@ type error =
   | UnexpectedExistential
   | OrpatVars(Ident.t, list(Ident.t))
   | OrPatternTypeClash(Ident.t, list((type_expr, type_expr)))
-  | UnrefutedPattern(pattern);
+  | UnrefutedPattern(pattern)
+  | InlineRecordPatternMisuse(Identifier.t, string, string);
+
+let ident_empty = {
+  txt: Identifier.IdentName(Location.mknoloc("[]")),
+  loc: Location.dummy_loc,
+};
+let ident_cons = {
+  txt: Identifier.IdentName(Location.mknoloc("[...]")),
+  loc: Location.dummy_loc,
+};
 
 exception Error(Location.t, Env.t, error);
 
@@ -50,13 +60,26 @@ let iter_ppat = (f, p) =>
   switch (p.ppat_desc) {
   | PPatAny
   | PPatVar(_)
-  | PPatConstant(_) => ()
+  | PPatConstant(_)
+  | PPatConstruct(_, PPatConstrSingleton) => ()
   | PPatTuple(lst) => List.iter(f, lst)
+  | PPatList(lst) =>
+    List.iter(
+      item => {
+        switch (item) {
+        | ListItem(p) => f(p)
+        | ListSpread(p, _) => f(p)
+        }
+      },
+      lst,
+    )
   | PPatArray(lst) => List.iter(f, lst)
-  | PPatRecord(fs, _) => List.iter(((_, p)) => f(p), fs)
+  | PPatRecord(fs, _)
+  | PPatConstruct(_, PPatConstrRecord(fs, _)) =>
+    List.iter(((_, p)) => f(p), fs)
   | PPatAlias(p, _)
   | PPatConstraint(p, _) => f(p)
-  | PPatConstruct(_, lst) => List.iter(f, lst)
+  | PPatConstruct(_, PPatConstrTuple(lst)) => List.iter(f, lst)
   | PPatOr(p1, p2) =>
     f(p1);
     f(p2);
@@ -525,7 +548,7 @@ and type_pat_aux =
         Typetexp.find_all_constructors(
           env^,
           name.loc,
-          Identifier.IdentName(name.txt),
+          Identifier.IdentName(name),
         )
       };
 
@@ -549,8 +572,8 @@ and type_pat_aux =
           ...sp,
           ppat_desc:
             PPatConstruct(
-              Location.mkloc(Identifier.IdentName(name.txt), name.loc),
-              [],
+              Location.mkloc(Identifier.IdentName(name), name.loc),
+              PPatConstrTuple([]),
             ),
         },
         expected_ty,
@@ -661,6 +684,49 @@ and type_pat_aux =
           },
         ),
     );
+  | PPatList(spl) =>
+    let convert_list = (~loc, a) => {
+      open Ast_helper;
+      let empty = Pattern.tuple_construct(~loc, ident_empty, []);
+      let a = List.rev(a);
+      switch (a) {
+      | [] => empty
+      | [base, ...rest] =>
+        let base =
+          switch (base) {
+          | ListItem(pat) =>
+            Pattern.tuple_construct(~loc, ident_cons, [pat, empty])
+          | ListSpread(pat, _) => pat
+          };
+        List.fold_left(
+          (acc, pat) => {
+            switch (pat) {
+            | ListItem(pat) =>
+              Pattern.tuple_construct(~loc, ident_cons, [pat, acc])
+            | ListSpread(_, loc) =>
+              raise(
+                SyntaxError(
+                  loc,
+                  "A list spread can only appear at the end of a list.",
+                ),
+              )
+            }
+          },
+          base,
+          rest,
+        );
+      };
+    };
+    type_pat(
+      ~constrs,
+      ~labels,
+      ~mode=mode',
+      ~explode,
+      ~env,
+      convert_list(~loc=sp.ppat_loc, spl),
+      expected_ty,
+      k,
+    );
   | PPatArray(spl) =>
     let arr_ty = newgenvar();
     unify_pat_types(
@@ -723,38 +789,46 @@ and type_pat_aux =
     };
 
     let k' = pat => rp(k, unif(pat));
-    switch (mode) {
-    | Normal =>
-      k'(
-        wrap_disambiguate(
-          "This record pattern is expected to have",
-          mk_expected(expected_ty),
-          type_label_a_list(
-            loc,
-            false,
-            env^,
-            type_label_pat,
-            opath,
-            lid_pat_list,
-          ),
-          make_record_pat,
+    k'(
+      wrap_disambiguate(
+        "This record pattern is expected to have",
+        mk_expected(expected_ty),
+        type_label_a_list(
+          loc,
+          false,
+          env^,
+          type_label_pat,
+          opath,
+          lid_pat_list,
         ),
-      )
-    | _ => failwith("Counter examples NYI")
-    /* | Counter_example {labels; _} ->
-       type_label_a_list ~labels loc false !env type_label_pat opath
-         lid_pat_list (fun lbl_pat_list -> k' (make_record_pat lbl_pat_list)) */
-    };
-  | PPatConstruct(lid, sargs) =>
+        make_record_pat,
+      ),
+    );
+  | PPatConstruct(lid, sarg) =>
+    let (sargs, is_record_pat) =
+      switch (sarg) {
+      | PPatConstrSingleton => ([], false)
+      | PPatConstrTuple(sargs) => (sargs, false)
+      | PPatConstrRecord(rfs, c) =>
+        let desc =
+          switch (rfs) {
+          // trick to get `C { _ }` pattern to work properly
+          | [] => PPatAny
+          | _ => PPatRecord(rfs, c)
+          };
+        ([{ppat_desc: desc, ppat_loc: loc}], true);
+      };
     let opath =
-      /*try
-          let (p0, p, _) = extract_concrete_variant !env expected_ty in
-            Some (p0, p, true)
-        with Not_found ->*/ None;
+      try({
+        let (p0, p, _) = extract_concrete_variant(env^, expected_ty);
+        Some((p0, p, true));
+      }) {
+      | Not_found => None
+      };
 
     let candidates =
       switch (lid.txt, constrs) {
-      | (Identifier.IdentName(s), Some(constrs))
+      | (Identifier.IdentName({txt: s}), Some(constrs))
           when Hashtbl.mem(constrs, s) => [
           (Hashtbl.find(constrs, s), (() => ())),
         ]
@@ -794,6 +868,20 @@ and type_pat_aux =
             Warnings.Fragile_literal_pattern
       | _ -> ()
       end;*/
+    let is_record_cstr = constr.cstr_inlined != None;
+    if (is_record_pat != is_record_cstr) {
+      raise(
+        Error(
+          loc,
+          env^,
+          InlineRecordPatternMisuse(
+            lid.txt,
+            if (is_record_cstr) {"record"} else {"tuple"},
+            if (is_record_pat) {"record"} else {"tuple"},
+          ),
+        ),
+      );
+    };
     if (List.length(sargs) != constr.cstr_arity) {
       raise(
         Error(
@@ -903,21 +991,14 @@ and type_pat_aux =
       };
     };
   | PPatConstraint(sp, sty) =>
-    /* Separate when not already separated by !principal */
-    let separate = true;
-    if (separate) {
-      begin_def();
-    };
+    begin_def();
     let (cty, force) = Typetexp.transl_simple_type_delayed(env^, sty);
     let ty = cty.ctyp_type;
-    let (ty, expected_ty') =
-      if (separate) {
-        end_def();
-        generalize_structure(ty);
-        (instance(env^, ty), instance(env^, ty));
-      } else {
-        (ty, ty);
-      };
+    let (ty, expected_ty') = {
+      end_def();
+      generalize_structure(ty);
+      (instance(env^, ty), instance(env^, ty));
+    };
 
     unify_pat_types(loc, env^, ty, expected_ty);
     type_pat(
@@ -930,19 +1011,16 @@ and type_pat_aux =
         pattern_force := [force, ...pattern_force^];
         let extra = (TPatConstraint(cty), loc);
         let p =
-          if (!separate) {
-            p;
-          } else {
-            switch (p.pat_desc) {
-            | TPatVar(id, s) => {
-                ...p,
-                pat_type: ty,
-                pat_desc: TPatAlias({...p, pat_desc: TPatAny}, id, s),
-                pat_extra: [extra],
-              }
-            | _ => {...p, pat_type: ty, pat_extra: [extra, ...p.pat_extra]}
-            };
+          switch (p.pat_desc) {
+          | TPatVar(id, s) => {
+              ...p,
+              pat_type: ty,
+              pat_desc: TPatAlias({...p, pat_desc: TPatAny}, id, s),
+              pat_extra: [extra],
+            }
+          | _ => {...p, pat_type: ty, pat_extra: [extra, ...p.pat_extra]}
           };
+
         k(p);
       },
     );
@@ -1054,7 +1132,8 @@ let check_unused = (~lev=get_current_level(), env, expected_ty, cases) =>
     cases,
   );
 
-let add_pattern_variables = (~check=?, ~check_as=?, ~mut=false, env) => {
+let add_pattern_variables =
+    (~check=?, ~check_as=?, ~mut=false, ~global=false, env) => {
   let pv = get_ref(pattern_variables);
   (
     List.fold_right(
@@ -1068,8 +1147,10 @@ let add_pattern_variables = (~check=?, ~check_as=?, ~mut=false, env) => {
             val_repr: Type_utils.repr_of_type(env, ty),
             val_kind: TValReg,
             Types.val_loc: loc,
+            val_internalpath: Path.PIdent(id),
             val_fullpath: Path.PIdent(id),
             val_mutable: mut,
+            val_global: global,
           },
           env,
         );
@@ -1092,7 +1173,8 @@ let type_pattern = (~lev, env, spat, scope, expected_ty) => {
   (pat, new_env, get_ref(pattern_force), unpacks);
 };
 
-let type_pattern_list = (~mut=false, env, spatl, scope, expected_tys, allow) => {
+let type_pattern_list =
+    (~mut=false, ~global=false, env, spatl, scope, expected_tys, allow) => {
   reset_pattern(/*scope*/ None, allow);
   let new_env = ref(env);
   let type_pat = ((attrs, pat), ty) => {
@@ -1110,7 +1192,8 @@ let type_pattern_list = (~mut=false, env, spatl, scope, expected_tys, allow) => 
   };
 
   let patl = List.map2(type_pat, spatl, expected_tys);
-  let (new_env, unpacks, pv) = add_pattern_variables(~mut, new_env^);
+  let (new_env, unpacks, pv) =
+    add_pattern_variables(~mut, ~global, new_env^);
   (patl, new_env, get_ref(pattern_force), unpacks, pv);
 };
 
@@ -1242,6 +1325,15 @@ let report_error = (env, ppf) =>
       "Here is an example of a value that would reach it:",
       Printpat.top_pretty,
       pat,
+    )
+  | InlineRecordPatternMisuse(cstr_name, cstr_type, pat_type) =>
+    fprintf(
+      ppf,
+      "@[%a is a %s constructor but a %s constructor pattern was given.@]",
+      identifier,
+      cstr_name,
+      cstr_type,
+      pat_type,
     );
 
 let report_error = (env, ppf, err) =>

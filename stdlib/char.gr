@@ -1,165 +1,125 @@
-import WasmI32 from "runtime/unsafe/wasmi32"
-import Memory from "runtime/unsafe/memory"
-import Errors from "runtime/unsafe/errors"
-import { tagSimpleNumber, allocateChar, allocateString } from "runtime/dataStructures"
+/**
+ * Utilities for working with the Char type.
+ *
+ * The Char type represents a single [Unicode scalar value](https://www.unicode.org/glossary/#unicode_scalar_value).
+ *
+ * @example from "char" include Char
+ *
+ * @example 'a'
+ * @example '1'
+ * @example '🌾'
+ *
+ * @since v0.3.0
+ */
+module Char
 
-export *
+from "runtime/unsafe/wasmi32" include WasmI32
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ tagSimpleNumber, tagChar, untagChar, allocateString }
 
 exception MalformedUtf8
 
-// The minimum value of Unicode characters
-// Number
-let min = 0x0000
+/**
+ * The minimum valid Unicode scalar value.
+ *
+ * @since v0.3.0
+ */
+provide let min = 0x0000
+/**
+ * The maximum valid Unicode scalar value.
+ *
+ * @since v0.3.0
+ */
+provide let max = 0x10FFFF
 
-// The maximum value of Unicode characters
-// Number
-let max = 0x10FFFF
-
-// Returns true if the given number is a valid Unicode scalar value.
-// @param n: Number - the value to check
-// @returns Bool
-let isValid = (n) => {
-  n >= min && (n <= 0xD7FF || n >= 0xE000) && n <= max
+/**
+ * Determines whether the given character code is a valid Unicode scalar value.
+ *
+ * @param charCode: The number to check
+ * @returns `true` if the number refers to a valid Unicode scalar value or `false` otherwise
+ *
+ * @example Char.isValid(0) == true
+ * @example Char.isValid(-1) == false
+ *
+ * @since v0.3.0
+ */
+provide let isValid = charCode => {
+  charCode >= min &&
+    (charCode <= 0xD7FF || charCode >= 0xE000) &&
+    charCode <= max
 }
 
-// Returns the Unicode code point for the character
-// @param char: Char - the input character
-// @returns Number
-@disableGC
-let rec code = (c: Char) => {
-  // Algorithm from https://encoding.spec.whatwg.org/#utf-8-decoder
+/**
+ * Determines the Unicode scalar value for a character.
+ *
+ * @param char: The character
+ * @returns The Unicode scalar value for the given character
+ *
+ * @example Char.code('a') == 97
+ * @example Char.code('🌾') == 127806
+ *
+ * @since v0.3.0
+ */
+@unsafe
+provide let code = (char: Char) => {
+  let usv = untagChar(char)
 
-  let c = WasmI32.fromGrain(c)
-
-  let (+) = WasmI32.add
-  let (==) = WasmI32.eq
-  let (>=) = WasmI32.geU
-  let (<=) = WasmI32.leU
-  let (<<) = WasmI32.shl
-  let (&) = WasmI32.and
-  let (|) = WasmI32.or
-
-  let mut codePoint = 0n
-  let mut bytesSeen = 0n
-  let mut bytesNeeded = 0n
-  let mut lowerBoundary = 0x80n
-  let mut upperBoundary = 0xBFn
-
-  let mut offset = 0n
-
-  let mut result = 0n
-
-  while (true) {
-    let byte = WasmI32.load8U(c + offset, 4n)
-    offset += 1n
-    if (bytesNeeded == 0n) {
-      if (byte >= 0x00n && byte <= 0x7Fn) {
-        result = byte
-        break
-      } else if (byte >= 0xC2n && byte <= 0xDFn) {
-        bytesNeeded = 1n
-        codePoint = byte & 0x1Fn
-      } else if (byte >= 0xE0n && byte <= 0xEFn) {
-        if (byte == 0xE0n) lowerBoundary = 0xA0n
-        if (byte == 0xEDn) upperBoundary = 0x9Fn
-        bytesNeeded = 2n
-        codePoint = byte & 0xFn
-      } else if (byte >= 0xF0n && byte <= 0xF4n) {
-        if (byte == 0xF0n) lowerBoundary = 0x90n
-        if (byte == 0xF4n) upperBoundary = 0x8Fn
-        bytesNeeded = 3n
-        codePoint = byte & 0x7n
-      } else {
-        throw MalformedUtf8
-      }
-      continue
-    }
-    if (!(lowerBoundary <= byte && byte <= upperBoundary)) {
-      throw MalformedUtf8
-    }
-    lowerBoundary = 0x80n
-    upperBoundary = 0xBFn
-    codePoint = (codePoint << 6n) | (byte & 0x3Fn)
-    bytesSeen += 1n
-    if (bytesSeen == bytesNeeded) {
-      result = codePoint
-      break
-    }
-  }
-
-  Memory.decRef(c)
-  Memory.decRef(WasmI32.fromGrain(code))
-  tagSimpleNumber(result)
+  // This could save an instruction by combining the two tagging operations,
+  // though we stick with tagSimpleNumber for simplicity.
+  tagSimpleNumber(usv)
 }
 
-// Returns the Char for the given code point. Fails if the code point is invalid.
-// @param codePoint: Number - the Unicode code point
-// @returns Char
-@disableGC
-let rec fromCode = (code: Number) => {
-  // Algorithm from https://encoding.spec.whatwg.org/#utf-8-encoder
+/**
+ * Creates a character from the given Unicode scalar value.
+ *
+ * @param usv: The Unicode scalar value
+ * @returns The character for the given Unicode scalar value
+ *
+ * @throws InvalidArgument(String): When the Unicode scalar value is invalid
+ *
+ * @example Char.fromCode(97) == 'a'
+ * @example Char.fromCode(127806) == '🌾'
+ *
+ * @since v0.3.0
+ */
+@unsafe
+provide let fromCode = (usv: Number) => {
+  use WasmI32.{ (-), (<<) }
 
-  let (+) = WasmI32.add
-  let (-) = WasmI32.sub
-  let (*) = WasmI32.mul
-  let (==) = WasmI32.eq
-  let (>) = WasmI32.gtU
-  let (<=) = WasmI32.leU
-  let (<) = WasmI32.ltU
-  let (>>>) = WasmI32.shrU
-  let (&) = WasmI32.and
-  let (|) = WasmI32.or
-
-  let code = WasmI32.fromGrain(code)
-  if ((code & 1n) == 0n) {
+  if (!isValid(usv)) {
     throw InvalidArgument("Invalid character code")
   }
 
-  let code = code >>> 1n
-  let result = if (code < 0x80n) {
-    let char = allocateChar()
-    WasmI32.store8(char, code, 4n)
-    WasmI32.toGrain(char): Char
-  } else {
-    let mut count = 0n
-    let mut offset = 0n
-    if (code <= 0x07FFn) {
-      count = 1n
-      offset = 0xC0n
-    } else if (code <= 0xFFFFn) {
-      count = 2n
-      offset = 0xE0n
-    } else {
-      count = 3n
-      offset = 0xF0n
-    }
-    let char = allocateChar()
-    WasmI32.store8(char, (code >>> (6n * count)) + offset, 4n)
+  // usv is now guaranteed to be a simple number
+  let usv = WasmI32.fromGrain(usv)
 
-    let mut n = 0n
-    while (count > 0n) {
-      n += 1n
-      let temp = code >>> (6n * (count - 1n))
-      WasmI32.store8(char + n, 0x80n | (temp & 0x3Fn), 4n)
-      count -= 1n
-    }
+  // Here we use a math trick to avoid fully untagging and retagging.
+  // Simple numbers are represented as 2n + 1 and chars are represented as
+  // (2^8)n + 2. Quick reminder that shifting left is the equivalent of multiplying
+  // by 2
+  // 2^7(2n + 1) - (2^7 - 2) = (2^8)n + 2
+  let char = (usv << 7n) - 126n
 
-    WasmI32.toGrain(char): Char
-  }
-
-  // We've asserted that the original `code` was a stack allocated number so
-  // no need to decRef it
-  Memory.decRef(WasmI32.fromGrain(fromCode))
-  result
+  WasmI32.toGrain(char): Char
 }
 
-// Returns the next valid Unicode character by code point. Fails if the input character is U+10FFFF.
-// @param char: Char - the input character
-// @returns Char
-let succ = (c) => {
-  let codePoint = code(c)
+/**
+ * Returns the next valid character by Unicode scalar value.
+ *
+ * @param char: The character
+ * @returns The next valid character by Unicode scalar value
+ *
+ * @throws Failure(String): When the input character is the maximum valid Unicode scalar value
+ *
+ * @example Char.succ('a') == 'b'
+ * @example Char.succ('1') == '2'
+ *
+ * @since v0.3.0
+ */
+provide let succ = char => {
+  let codePoint = code(char)
   if (codePoint == max) {
-    fail "no valid Unicode code point past U+10FFF"
+    fail "no valid Unicode scalar value past U+10FFF"
   } else if (codePoint == 0xD7FF) {
     fromCode(0xE000)
   } else {
@@ -167,13 +127,23 @@ let succ = (c) => {
   }
 }
 
-// Returns the previous valid Unicode character by code point. Fails if the input character is U+0000.
-// @param char: Char - the input character
-// @returns Char
-let pred = (c) => {
-  let codePoint = code(c)
+/**
+ * Returns the previous valid character by Unicode scalar value.
+ *
+ * @param char: The character
+ * @returns The previous valid character by Unicode scalar value
+ *
+ * @throws Failure(String): When the input character is the minimum valid Unicode scalar value
+ *
+ * @example Char.pred('b') == 'a'
+ * @example Char.pred('2') == '1'
+ *
+ * @since v0.3.0
+ */
+provide let pred = char => {
+  let codePoint = code(char)
   if (codePoint == min) {
-    fail "no valid Unicode code point below U+0000"
+    fail "no valid Unicode scalar value below U+0000"
   } else if (codePoint == 0xE000) {
     fromCode(0xD7FF)
   } else {
@@ -181,30 +151,228 @@ let pred = (c) => {
   }
 }
 
-// Creates a new string containing the character.
-// @param char: Char - the character to convert
-// @returns String
-@disableGC
-export let rec toString = (c: Char) => {
-  let (+) = WasmI32.add
-  let (&) = WasmI32.and
-  let (==) = WasmI32.eq
-
-  let c = WasmI32.fromGrain(c)
-  let byte = WasmI32.load8U(c, 4n)
-  let n = if ((byte & 0x80n) == 0x00n) {
-    1n
-  } else if ((byte & 0xF0n) == 0xF0n) {
-    4n
-  } else if ((byte & 0xE0n) == 0xE0n) {
-    3n
-  } else {
-    2n
+/**
+ * Converts the given character to a string.
+ *
+ * @param char: The character to convert
+ * @returns A string containing the given character
+ *
+ * @example Char.toString('a') == "a"
+ * @example Char.toString('🌾') == "🌾"
+ *
+ * @since v0.3.0
+ */
+@unsafe
+provide let toString = (char: Char) => {
+  use WasmI32.{
+    (+),
+    (-),
+    (*),
+    (&),
+    (|),
+    (>>>),
+    ltU as (<),
+    gtU as (>),
+    leU as (<=),
   }
-  let str = allocateString(n)
-  Memory.copy(str + 8n, c + 4n, n)
-  let ret = WasmI32.toGrain(str): String
-  Memory.decRef(WasmI32.fromGrain(c))
-  Memory.decRef(WasmI32.fromGrain(toString))
-  ret
+
+  let usv = untagChar(char)
+
+  let result = if (usv < 0x80n) {
+    let string = allocateString(1n)
+    WasmI32.store8(string, usv, 8n)
+    WasmI32.toGrain(string): String
+  } else {
+    let mut count = 0n
+    let mut offset = 0n
+    if (usv <= 0x07FFn) {
+      count = 1n
+      offset = 0xC0n
+    } else if (usv <= 0xFFFFn) {
+      count = 2n
+      offset = 0xE0n
+    } else {
+      count = 3n
+      offset = 0xF0n
+    }
+    let string = allocateString(count + 1n)
+    WasmI32.store8(string, (usv >>> (6n * count)) + offset, 8n)
+
+    let mut n = 0n
+    while (count > 0n) {
+      n += 1n
+      let temp = usv >>> (6n * (count - 1n))
+      WasmI32.store8(string + n, 0x80n | temp & 0x3Fn, 8n)
+      count -= 1n
+    }
+
+    WasmI32.toGrain(string): String
+  }
+
+  result
+}
+
+/**
+ * Checks if the first character is less than the second character by Unicode scalar value.
+ *
+ * @param x: The first character
+ * @param y: The second character
+ * @returns `true` if the first character is less than the second character or `false` otherwise
+ *
+ * @example
+ * use Char.{ (<) }
+ * assert 'a' < 'b'
+ * @example
+ * use Char.{ (<) }
+ * assert '1' < '2'
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let (<) = (x: Char, y: Char) => {
+  use WasmI32.{ (<) }
+  let x = WasmI32.fromGrain(x)
+  let y = WasmI32.fromGrain(y)
+  x < y
+}
+
+/**
+ * Checks if the first character is less than or equal to the second character by Unicode scalar value.
+ *
+ * @param x: The first character
+ * @param y: The second character
+ * @returns `true` if the first character is less than or equal to the second character or `false` otherwise
+ *
+ * @example
+ * use Char.{ (<=) }
+ * assert 'a' <= 'b'
+ * @example
+ * use Char.{ (<=) }
+ * assert '1' <= '2'
+ * @example
+ * use Char.{ (<=) }
+ * assert 'a' <= 'a'
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let (<=) = (x: Char, y: Char) => {
+  use WasmI32.{ (<=) }
+  let x = WasmI32.fromGrain(x)
+  let y = WasmI32.fromGrain(y)
+  x <= y
+}
+
+/**
+ * Checks if the first character is greater than the second character by Unicode scalar value.
+ *
+ * @param x: The first character
+ * @param y: The second character
+ * @returns `true` if the first character is greater than the second character or `false` otherwise
+ *
+ * @example
+ * use Char.{ (>) }
+ * assert 'b' > 'a'
+ * @example
+ * use Char.{ (>) }
+ * assert '2' > '1'
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let (>) = (x: Char, y: Char) => {
+  use WasmI32.{ (>) }
+  let x = WasmI32.fromGrain(x)
+  let y = WasmI32.fromGrain(y)
+  x > y
+}
+
+/**
+ * Checks if the first character is greater than or equal to the second character by Unicode scalar value.
+ *
+ * @param x: The first character
+ * @param y: The second character
+ * @returns `true` if the first character is greater than or equal to the second character or `false` otherwise
+ *
+ * @example
+ * use Char.{ (>=) }
+ * assert 'b' >= 'a'
+ * @example
+ * use Char.{ (>=) }
+ * assert '2' >= '1'
+ * @example
+ * use Char.{ (>=) }
+ * assert 'a' >= 'a'
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let (>=) = (x: Char, y: Char) => {
+  use WasmI32.{ (>=) }
+  let x = WasmI32.fromGrain(x)
+  let y = WasmI32.fromGrain(y)
+  x >= y
+}
+
+/**
+ * Checks if the character is an ASCII digit.
+ *
+ * @param char: The character to check
+ * @returns `true` if the character is an ASCII digit or `false` otherwise
+ * 
+ * @example assert Char.isAsciiDigit('1')
+ * @example assert !Char.isAsciiDigit('a')
+ *
+ * @since v0.6.0
+ */
+provide let isAsciiDigit = char => char >= '0' && char <= '9'
+
+/**
+ * Checks if the character is an ASCII alphabetical character.
+ *
+ * @param char: The character to check
+ * @returns `true` if the character is an ASCII alphabetical or `false` otherwise
+ *
+ * @example assert Char.isAsciiAlpha('a')
+ * @example assert !Char.isAsciiAlpha('1')
+ *
+ * @since v0.6.0
+ */
+provide let isAsciiAlpha = char =>
+  char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
+
+/**
+ * Converts the character to ASCII lowercase if it is an ASCII uppercase character.
+ * 
+ * @param char: The character to convert
+ * @returns The lowercased character
+ * 
+ * @example assert Char.toAsciiLowercase('B') == 'b'
+ * 
+ * @since v0.6.0
+ */
+provide let toAsciiLowercase = char => {
+  if (char >= 'A' && char <= 'Z') {
+    fromCode(code(char) + 0x20)
+  } else {
+    char
+  }
+}
+
+/**
+ * Converts the character to ASCII uppercase if it is an ASCII lowercase character.
+ * 
+ * @param char: The character to convert
+ * @returns The uppercased character
+ * 
+ * @example assert Char.toAsciiUppercase('b') == 'B'
+ * 
+ * @since v0.6.0
+ */
+provide let toAsciiUppercase = char => {
+  if (char >= 'a' && char <= 'z') {
+    fromCode(code(char) - 0x20)
+  } else {
+    char
+  }
 }

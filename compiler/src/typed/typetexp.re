@@ -13,8 +13,6 @@
 /*                                                                        */
 /**************************************************************************/
 
-/* typetexp.ml,v 1.34.4.9 2002/01/07 08:39:16 garrigue Exp */
-
 /* Typechecking of type expressions for the core language */
 open Grain_parsing;
 open Grain_utils;
@@ -49,6 +47,7 @@ type error =
   | Unbound_value(Identifier.t)
   | Unbound_value_in_module(Identifier.t, string)
   | Unbound_constructor(Identifier.t)
+  | Unbound_exception(Identifier.t)
   | Unbound_label(Identifier.t)
   | Unbound_module(Identifier.t)
   | Unbound_class(Identifier.t)
@@ -98,7 +97,7 @@ let rec narrow_unbound_lid_error: 'a. (_, _, _, _) => 'a =
     | Identifier.IdentName(_) => ()
     | Identifier.IdentExternal(mlid, id) =>
       check_module(mlid);
-      error(Unbound_value_in_module(mlid, id));
+      error(Unbound_value_in_module(mlid, id.txt));
     /* let md = Env.find_module (Env.lookup_module ~load:true mlid None env) None env in
        begin match Env.scrape_alias env md.md_type with
        | TModIdent _ ->
@@ -113,13 +112,13 @@ let rec narrow_unbound_lid_error: 'a. (_, _, _, _) => 'a =
 let find_component = (lookup: (~mark: _=?) => _, make_error, env, loc, lid) =>
   try(
     switch (lid) {
-    | Identifier.IdentExternal(Identifier.IdentName("*predef*"), s) =>
+    | Identifier.IdentExternal(Identifier.IdentName({txt: "*predef*"}), s) =>
       lookup(Identifier.IdentName(s), Env.initial_env)
     | _ => lookup(lid, env)
     }
   ) {
   | Not_found =>
-    /* [FIXME] This should be replaced with a more specific exception, since it can eat errors from compilation of submodules */
+    // TODO(#1506): Replace this with a more specific exception as it can eat errors from compilation of submodules
     narrow_unbound_lid_error(env, loc, lid, make_error)
   };
 
@@ -139,6 +138,20 @@ let find_type = (env, loc, lid) => {
 
 let find_constructor =
   find_component(Env.lookup_constructor, lid => Unbound_constructor(lid));
+let find_exception = (env, loc, lid) => {
+  let cstr =
+    find_component(
+      Env.lookup_constructor,
+      lid => Unbound_exception(lid),
+      env,
+      loc,
+      lid,
+    );
+  switch (cstr.cstr_tag) {
+  | CstrExtension(_, _, _, ext) => ext
+  | _ => raise(Error(loc, env, Unbound_exception(lid)))
+  };
+};
 let find_all_constructors =
   find_component(Env.lookup_all_constructors, lid =>
     Unbound_constructor(lid)
@@ -168,9 +181,9 @@ let lookup_module = (~load=false, env, loc, lid, filepath) =>
     lid,
   );
 
-let find_module = (env, loc, lid, filepath) => {
-  let path = lookup_module(~load=true, env, loc, lid, filepath);
-  let decl = Env.find_module(path, filepath, env);
+let find_module = (env, loc, lid) => {
+  let path = lookup_module(env, loc, lid, None);
+  let decl = Env.find_module(path, None, env);
   /* No need to check for deprecated here, this is done in Env. */
   (path, decl);
 };
@@ -340,12 +353,37 @@ and transl_type_aux = (env, policy, styp) => {
     };
 
     ctyp(TTyVar(name), ty);
-  | PTyArrow(st1, st2) =>
-    let cty1 = List.map(transl_type(env, policy), st1);
+  | PTyArrow(stl, st2) =>
+    let ctyl =
+      List.map(
+        st => {
+          let ty = transl_type(env, policy, st.ptyp_arg_type);
+          (st.ptyp_arg_label, ty);
+        },
+        stl,
+      );
+    let tyl =
+      List.map(
+        ((l, ty)) => {
+          let ty =
+            if (Btype.is_optional(l)) {
+              newty(
+                TTyConstr(
+                  Builtin_types.path_option,
+                  [ty.ctyp_type],
+                  ref(TMemNil),
+                ),
+              );
+            } else {
+              ty.ctyp_type;
+            };
+          (l, ty);
+        },
+        ctyl,
+      );
     let cty2 = transl_type(env, policy, st2);
-    let ty1 = List.map(x => x.ctyp_type, cty1);
-    let ty = newty(TTyArrow(ty1, cty2.ctyp_type, TComOk));
-    ctyp(TTyArrow(cty1, cty2), ty);
+    let ty = newty(TTyArrow(tyl, cty2.ctyp_type, TComOk));
+    ctyp(TTyArrow(ctyl, cty2), ty);
   | PTyTuple(stl) =>
     assert(List.length(stl) >= 1);
     let ctys = List.map(transl_type(env, policy), stl);
@@ -435,7 +473,7 @@ and transl_type_aux = (env, policy, styp) => {
 };
 
 let make_fixed_univars = ty =>
-  /* TODO: Remove */
+  // TODO: Remove
   ();
 
 let globalize_used_variables = (env, fixed) => {
@@ -457,7 +495,13 @@ let globalize_used_variables = (env, fixed) => {
         try(r := [(loc, v, Tbl.find(name, type_variables^)), ...r^]) {
         | Not_found =>
           if (fixed && Btype.is_Tvar(repr(ty))) {
-            raise(Error(loc, env, Unbound_type_variable("'" ++ name)));
+            raise(
+              Error(
+                loc,
+                env,
+                Unbound_type_variable(Printf.sprintf("'%s'", name)),
+              ),
+            );
           };
           let v2 = new_global_var();
           r := [(loc, v, v2), ...r^];
@@ -558,9 +602,9 @@ let spellcheck = (ppf, fold, env, lid) => {
   };
   switch (lid) {
   | Identifier.IdentName(s) =>
-    Misc.did_you_mean(ppf, () => choices(~path=None, s))
+    Misc.did_you_mean(ppf, () => choices(~path=None, s.txt))
   | Identifier.IdentExternal(r, s) =>
-    Misc.did_you_mean(ppf, () => choices(~path=Some(r), s))
+    Misc.did_you_mean(ppf, () => choices(~path=Some(r), s.txt))
   };
 };
 
@@ -581,14 +625,17 @@ let fold_values = fold_simple(Env.fold_values);
 let fold_types = fold_simple(Env.fold_types);
 let fold_modules = fold_persistent(Env.fold_modules);
 let fold_constructors = fold_descr(Env.fold_constructors, d => d.cstr_name);
+let fold_labels = fold_descr(Env.fold_labels, l => l.lbl_name);
 let fold_modtypes = fold_simple(Env.fold_modtypes);
 
 let type_attributes = attrs => {
   List.map(
-    (({txt}, args)) =>
-      switch (txt, args) {
-      | ("disableGC", []) => Disable_gc
-      | ("externalName", [{txt}]) => External_name(txt)
+    ({attr_name: {txt, loc}, attr_args}) =>
+      switch (txt, attr_args) {
+      | ("disableGC", []) => Location.mkloc(Disable_gc, loc)
+      | ("unsafe", []) => Location.mkloc(Unsafe, loc)
+      | ("externalName", [name]) =>
+        Location.mkloc(External_name(name), loc)
       | _ => failwith("type_attributes: impossible by well-formedness")
       },
     attrs,
@@ -742,7 +789,14 @@ let report_error = (env, ppf) =>
       fprintf(ppf, "Unbound constructor %a", identifier, lid);
       spellcheck(ppf, fold_constructors, env, lid);
     }
-  | Unbound_label(_)
+  | Unbound_exception(lid) => {
+      fprintf(ppf, "Unbound exception %a", identifier, lid);
+      spellcheck(ppf, fold_constructors, env, lid);
+    }
+  | Unbound_label(lid) => {
+      fprintf(ppf, "Unbound record label %a", identifier, lid);
+      spellcheck(ppf, fold_labels, env, lid);
+    }
   | Unbound_class(_)
   | Unbound_cltype(_) =>
     failwith("Impossible: deprecated error type in typetexp")

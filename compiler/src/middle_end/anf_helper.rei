@@ -49,11 +49,26 @@ module Comp: {
   let int64:
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, int64) =>
     comp_expression;
+  let uint32:
+    (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, int32) =>
+    comp_expression;
+  let uint64:
+    (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, int64) =>
+    comp_expression;
   let float32:
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, float) =>
     comp_expression;
   let float64:
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, float) =>
+    comp_expression;
+  let prim0:
+    (
+      ~loc: loc=?,
+      ~attributes: attributes=?,
+      ~allocation_type: allocation_type,
+      ~env: env=?,
+      prim0
+    ) =>
     comp_expression;
   let prim1:
     (
@@ -159,7 +174,8 @@ module Comp: {
       ~attributes: attributes=?,
       ~env: env=?,
       imm_expression,
-      list((str, imm_expression))
+      imm_expression,
+      list((option(str), imm_expression))
     ) =>
     comp_expression;
   let adt:
@@ -167,6 +183,7 @@ module Comp: {
       ~loc: loc=?,
       ~attributes: attributes=?,
       ~env: env=?,
+      imm_expression,
       imm_expression,
       imm_expression,
       list(imm_expression)
@@ -254,6 +271,14 @@ module Comp: {
   let break:
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, unit) =>
     comp_expression;
+  let return:
+    (
+      ~loc: loc=?,
+      ~attributes: attributes=?,
+      ~env: env=?,
+      option(imm_expression)
+    ) =>
+    comp_expression;
   let switch_:
     (
       ~loc: loc=?,
@@ -276,17 +301,6 @@ module Comp: {
       list(imm_expression)
     ) =>
     comp_expression;
-  let app_builtin:
-    (
-      ~loc: loc=?,
-      ~attributes: attributes=?,
-      ~allocation_type: allocation_type,
-      ~env: env=?,
-      string,
-      string,
-      list(imm_expression)
-    ) =>
-    comp_expression;
   let lambda:
     (
       ~loc: loc=?,
@@ -301,9 +315,6 @@ module Comp: {
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, bytes) =>
     comp_expression;
   let string:
-    (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, string) =>
-    comp_expression;
-  let char:
     (~loc: loc=?, ~attributes: attributes=?, ~env: env=?, string) =>
     comp_expression;
 };
@@ -334,7 +345,7 @@ module AExp: {
   let comp: (~loc: loc=?, ~env: env=?, comp_expression) => anf_expression;
 };
 
-module Imp: {
+module IncludeDeclaration: {
   let mk: (ident, import_desc, import_shape, global_flag) => import_spec;
   let grain_value:
     (~global: global_flag=?, ident, string, string, import_shape) =>
@@ -343,9 +354,6 @@ module Imp: {
     (~global: global_flag=?, ident, string, string, import_shape) =>
     import_spec;
   let wasm_value:
-    (~global: global_flag=?, ident, string, string, import_shape) =>
-    import_spec;
-  let js_func:
     (~global: global_flag=?, ident, string, string, import_shape) =>
     import_spec;
 };

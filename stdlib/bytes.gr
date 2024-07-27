@@ -1,78 +1,71 @@
 /**
- * @module Bytes: Utilities for working with byte sequences.
+ * Utilities for working with byte sequences.
  *
- * @example import Bytes from "bytes"
+ * @example from "bytes" include Bytes
+ *
+ * @example b"\x00"
+ * @example Bytes.make(1)
  *
  * @since v0.3.2
  */
+module Bytes
 
-import Memory from "runtime/unsafe/memory"
-import WasmI32 from "runtime/unsafe/wasmi32"
-import WasmI64 from "runtime/unsafe/wasmi64"
-import WasmF32 from "runtime/unsafe/wasmf32"
-import WasmF64 from "runtime/unsafe/wasmf64"
-import Conv from "runtime/unsafe/conv"
-import {
-  tagSimpleNumber,
+from "runtime/unsafe/memory" include Memory
+from "runtime/unsafe/wasmi32" include WasmI32
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/wasmf32" include WasmF32
+from "runtime/unsafe/wasmf64" include WasmF64
+from "runtime/unsafe/conv" include Conv
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{
+  tagInt8,
+  tagUint8,
+  tagInt16,
+  tagUint16,
+  untagInt8,
+  untagUint8,
+  untagInt16,
+  untagUint16,
   allocateBytes,
-  allocateString
-} from "runtime/dataStructures"
-import Exception from "runtime/exception"
-import Int32 from "int32"
-import { coerceNumberToWasmI32 } from "runtime/numbers"
-
-// hack to avoid incRef on these variables
-@disableGC
-let mut _SIZE_OFFSET = 1n
-@disableGC
-let mut _VALUE_OFFSET = 1n
-@disableGC
-let mut _INT8_BYTE_SIZE = 1n
-@disableGC
-let mut _INT16_BYTE_SIZE = 1n
-@disableGC
-let mut _INT32_BYTE_SIZE = 1n
-@disableGC
-let mut _FLOAT32_BYTE_SIZE = 1n
-@disableGC
-let mut _INT64_BYTE_SIZE = 1n
-@disableGC
-let mut _FLOAT64_BYTE_SIZE = 1n
-
-@disableGC
-let initVals = () => {
-  _SIZE_OFFSET = 4n
-  _VALUE_OFFSET = 8n
-  _INT8_BYTE_SIZE = 1n
-  _INT16_BYTE_SIZE = 2n
-  _INT32_BYTE_SIZE = 4n
-  _FLOAT32_BYTE_SIZE = 4n
-  _INT64_BYTE_SIZE = 8n
-  _FLOAT64_BYTE_SIZE = 8n
+  allocateString,
 }
-initVals()
+from "runtime/exception" include Exception
+from "int32" include Int32
+from "runtime/numbers" include Numbers
+use Numbers.{ coerceNumberToWasmI32 }
+
+@unsafe
+let _SIZE_OFFSET = 4n
+@unsafe
+let _VALUE_OFFSET = 8n
+@unsafe
+let _INT8_BYTE_SIZE = 1n
+@unsafe
+let _INT16_BYTE_SIZE = 2n
+@unsafe
+let _INT32_BYTE_SIZE = 4n
+@unsafe
+let _FLOAT32_BYTE_SIZE = 4n
+@unsafe
+let _INT64_BYTE_SIZE = 8n
+@unsafe
+let _FLOAT64_BYTE_SIZE = 8n
 
 /** Throws an exception if the index specified is out-of-bounds */
-@disableGC
+@unsafe
 let checkIndexIsInBounds = (i, byteSize, max) => {
-  let (+) = WasmI32.add
-  let (<) = WasmI32.ltS
-  let (>) = WasmI32.gtS
+  use WasmI32.{ (+), (<), (>) }
   if (i < 0n) {
-    throw Exception.IndexOutOfBounds
+    throw IndexOutOfBounds
   }
   if (i + byteSize > max) {
-    throw Exception.IndexOutOfBounds
+    throw IndexOutOfBounds
   }
 }
 
 /** Gets the size of a Bytes via its ptr */
-@disableGC
+@unsafe
 let getSize = ptr => WasmI32.load(ptr, _SIZE_OFFSET)
-
-/**
- * @section Values: Functions for working with the Bytes data type.
- */
 
 /**
  * Creates a new byte sequence of the input size.
@@ -80,23 +73,28 @@ let getSize = ptr => WasmI32.load(ptr, _SIZE_OFFSET)
  * @param size: The number of bytes to store
  * @returns The new byte sequence
  *
+ * @example Bytes.make(0) == b"""
+ * @example Bytes.make(1) == b"\x00"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec make = (size: Number) => {
-  let bytes = allocateBytes(coerceNumberToWasmI32(size))
-  let ret = WasmI32.toGrain(bytes): (Bytes)
-  Memory.decRef(WasmI32.fromGrain(size))
-  Memory.decRef(WasmI32.fromGrain(make))
-  ret
+@unsafe
+provide let make = (size: Number) => {
+  use WasmI32.{ (+) }
+  let size = coerceNumberToWasmI32(size)
+  let bytes = allocateBytes(size)
+  Memory.fill(bytes + 8n, 0n, size)
+  WasmI32.toGrain(bytes): Bytes
 }
 
 /**
  * An empty byte sequence.
  *
+ * @example Bytes.empty == b""
+ *
  * @since v0.3.2
  */
-export let empty = make(0)
+provide let empty = make(0)
 
 /**
  * Creates a new byte sequence from the input string.
@@ -104,19 +102,18 @@ export let empty = make(0)
  * @param string: The string to copy into a byte sequence
  * @returns The new byte sequence
  *
+ * @example Bytes.fromString("\x00\x00") == b"\x00\x00"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec fromString = (string: String) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let fromString = (string: String) => {
+  use WasmI32.{ (+) }
   let src = WasmI32.fromGrain(string)
   let size = getSize(src)
   let dst = allocateBytes(size)
   Memory.copy(dst + _VALUE_OFFSET, src + _VALUE_OFFSET, size)
-  let ret = WasmI32.toGrain(dst): (Bytes)
-  Memory.decRef(WasmI32.fromGrain(string))
-  Memory.decRef(WasmI32.fromGrain(fromString))
-  ret
+  WasmI32.toGrain(dst): Bytes
 }
 
 /**
@@ -125,19 +122,19 @@ export let rec fromString = (string: String) => {
  * @param bytes: The source byte sequence
  * @returns The string representation of the bytes
  *
+ * @example Bytes.toString(b"\x48\x65\x6c\x6c\x6f\x20\x57\x6f\x72\x6c\x64") == "Hello World"
+ * @example Bytes.toString(b"Hello World") == "Hello World"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec toString = (bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let toString = (bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let src = WasmI32.fromGrain(bytes)
   let size = getSize(src)
   let dst = allocateString(size)
   Memory.copy(dst + _VALUE_OFFSET, src + _VALUE_OFFSET, size)
-  let ret = WasmI32.toGrain(dst): (String)
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(toString))
-  ret
+  WasmI32.toGrain(dst): String
 }
 
 /**
@@ -146,15 +143,15 @@ export let rec toString = (bytes: Bytes) => {
  * @param bytes: The byte sequence to inspect
  * @returns The number of bytes
  *
+ * @example Bytes.length(b"") == 0
+ * @example Bytes.length(b"\x48") == 1
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec length = (bytes: Bytes) => {
+@unsafe
+provide let length = (bytes: Bytes) => {
   let b = WasmI32.fromGrain(bytes)
-  let ret = tagSimpleNumber(getSize(b))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(length))
-  ret
+  Conv.wasmI32ToNumber(getSize(b))
 }
 
 /**
@@ -163,19 +160,18 @@ export let rec length = (bytes: Bytes) => {
  * @param bytes: The byte sequence to copy
  * @returns The new byte sequence
  *
+ * @example Bytes.copy(b"\x48") == b"\x48"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec copy = (b: Bytes) => {
-  let (+) = WasmI32.add
-  let src = WasmI32.fromGrain(b)
+@unsafe
+provide let copy = (bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let src = WasmI32.fromGrain(bytes)
   let size = getSize(src)
   let dst = allocateBytes(size)
   Memory.copy(dst + _VALUE_OFFSET, src + _VALUE_OFFSET, size)
-  let ret = WasmI32.toGrain(dst): (Bytes)
-  Memory.decRef(WasmI32.fromGrain(b))
-  Memory.decRef(WasmI32.fromGrain(copy))
-  ret
+  WasmI32.toGrain(dst): Bytes
 }
 
 /**
@@ -186,12 +182,18 @@ export let rec copy = (b: Bytes) => {
  * @param bytes: The byte sequence to copy from
  * @returns A byte sequence with of the copied bytes
  *
+ * @throws InvalidArgument(String): When `start + length` is greater than the bytes size
+ *
+ * @example
+ * assert Bytes.toString(
+ *   Bytes.slice(0, 5, b"\x48\x65\x6c\x6c\x6f\x20\x57\x6f\x72\x6c\x64")
+ * ) == "Hello"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec slice = (start: Number, length: Number, bytes: Bytes) => {
-  let (>) = WasmI32.gtS
-  let (+) = WasmI32.add
+@unsafe
+provide let slice = (start: Number, length: Number, bytes: Bytes) => {
+  use WasmI32.{ (+), (>) }
   let src = WasmI32.fromGrain(bytes)
   let size = getSize(src)
   let iOrig = start
@@ -206,12 +208,7 @@ export let rec slice = (start: Number, length: Number, bytes: Bytes) => {
   let dst = allocateBytes(length)
   let offset = start
   Memory.copy(dst + _VALUE_OFFSET, src + _VALUE_OFFSET + start, length)
-  let ret = WasmI32.toGrain(dst): (Bytes)
-  Memory.decRef(WasmI32.fromGrain(iOrig))
-  Memory.decRef(WasmI32.fromGrain(lenOrig))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(slice))
-  ret
+  WasmI32.toGrain(dst): Bytes
 }
 
 /**
@@ -224,15 +221,15 @@ export let rec slice = (start: Number, length: Number, bytes: Bytes) => {
  * @param bytes: The byte sequence get a subset of bytes from
  * @returns A resized byte sequence
  *
+ * @throws InvalidArgument(String): When the new size is negative
+ *
+ * @example Bytes.length(Bytes.resize(0, 3, b"")) == 3
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec resize = (left: Number, right: Number, bytes: Bytes) => {
-  let (<) = WasmI32.ltS
-  let (>) = WasmI32.gtS
-  let (+) = WasmI32.add
-  let (-) = WasmI32.sub
-  let (*) = WasmI32.mul
+@unsafe
+provide let resize = (left: Number, right: Number, bytes: Bytes) => {
+  use WasmI32.{ (+), (-), (*), (<), (>) }
   let src = WasmI32.fromGrain(bytes)
   let size = getSize(src)
   let leftOrig = left
@@ -263,15 +260,10 @@ export let rec resize = (left: Number, right: Number, bytes: Bytes) => {
     Memory.copy(
       dst + _VALUE_OFFSET + dstOffset,
       src + _VALUE_OFFSET + srcOffset,
-      len,
+      len
     )
   }
-  let ret = WasmI32.toGrain(dst): (Bytes)
-  Memory.decRef(WasmI32.fromGrain(leftOrig))
-  Memory.decRef(WasmI32.fromGrain(rightOrig))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(resize))
-  ret
+  WasmI32.toGrain(dst): Bytes
 }
 
 /**
@@ -280,23 +272,29 @@ export let rec resize = (left: Number, right: Number, bytes: Bytes) => {
  *
  * @param srcIndex: The starting index to copy bytes from
  * @param dstIndex: The starting index to copy bytes into
- * @param length: The amount of bytes to copy from the source buffer
+ * @param length: The amount of bytes to copy from the source byte sequence
  * @param src: The source byte sequence
  * @param dst: The destination byte sequence
  *
+ * @throws InvalidArgument(String): When `srcIndex + length` is greater than the `src` bytes size
+ * @throws InvalidArgument(String): When the `dstIndex + length` is greater than the `dst` bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(5)
+ * Bytes.move(0, 0, 5, b"\x48\x64\x6c\x6f\x20\x57\x6f\x72\x6c\x64", bytes)
+ * assert Bytes.toString(bytes) == "Hello"
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec move =
-  (
-    srcIndex: Number,
-    dstIndex: Number,
-    length: Number,
-    src: Bytes,
-    dst: Bytes,
-  ) => {
-  let (>) = WasmI32.gtS
-  let (+) = WasmI32.add
+@unsafe
+provide let move = (
+  srcIndex: Number,
+  dstIndex: Number,
+  length: Number,
+  src: Bytes,
+  dst: Bytes,
+) => {
+  use WasmI32.{ (+), (>) }
   let srcIndexOrig = srcIndex
   let dstIndexOrig = dstIndex
   let lenthOrig = length
@@ -314,19 +312,11 @@ export let rec move =
     throw Exception.InvalidArgument("Invalid destination bytes range")
   }
   let end = srcIndex + length
-  let ret = Memory.copy(
+  Memory.copy(
     dst + _VALUE_OFFSET + dstIndex,
     src + _VALUE_OFFSET + srcIndex,
-    length,
+    length
   )
-
-  Memory.decRef(WasmI32.fromGrain(srcIndexOrig))
-  Memory.decRef(WasmI32.fromGrain(dstIndexOrig))
-  Memory.decRef(WasmI32.fromGrain(lenthOrig))
-  Memory.decRef(WasmI32.fromGrain(src))
-  Memory.decRef(WasmI32.fromGrain(dst))
-  Memory.decRef(WasmI32.fromGrain(move))
-  ret
 }
 
 /**
@@ -336,9 +326,14 @@ export let rec move =
  * @param bytes2: The ending byte sequence
  * @returns The new byte sequence
  *
+ * @example
+ * let helloBytes = Bytes.fromString("Hello ")
+ * let worldBytes = Bytes.fromString("World")
+ * assert Bytes.toString(Bytes.concat(helloBytes, worldBytes)) == "Hello World"
+ *
  * @since v0.3.2
  */
-export let concat = (bytes1: Bytes, bytes2: Bytes) => {
+provide let concat = (bytes1: Bytes, bytes2: Bytes) => {
   let len1 = length(bytes1)
   let len2 = length(bytes2)
   let ret = resize(0, len2, bytes1)
@@ -352,71 +347,71 @@ export let concat = (bytes1: Bytes, bytes2: Bytes) => {
  * @param value: The value replacing each byte
  * @param bytes: The byte sequence to update
  *
+ * @example
+ * let bytes = Bytes.make(5)
+ * Bytes.fill(1us, bytes)
+ * assert bytes == b"\x01\x01\x01\x01\x01"
+ *
  * @since v0.3.2
+ * @history v0.6.0: `value` argument type changed to `Uint8`
  */
-@disableGC
-export let rec fill = (value: Int32, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let fill = (value: Uint8, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let src = WasmI32.fromGrain(bytes)
   let size = getSize(src)
-  let v = Conv.fromInt32(value)
-  let ret = Memory.fill(src + _VALUE_OFFSET, v, size)
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(fill))
-  ret
+  let v = untagUint8(value)
+  Memory.fill(src + _VALUE_OFFSET, v, size)
 }
 
 /**
- * @section Binary operations on integers: Functions for encoding and decoding integers stored in a byte sequence.
+ * Replaces all bytes in a byte sequence with zeroes.
+ *
+ * @param bytes: The byte sequence to clear
+ *
+ * @example
+ * let bytes = Bytes.make(5)
+ * Bytes.fill(1us, bytes)
+ * Bytes.clear(bytes)
+ * assert bytes == b"\x00\x00\x00\x00\x00"
+ *
+ * @since v0.5.0
  */
+@unsafe
+provide let clear = (bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let src = WasmI32.fromGrain(bytes)
+  let size = getSize(src)
+  Memory.fill(src + _VALUE_OFFSET, 0n, size)
+}
 
 /**
  * Gets a signed 8-bit integer starting at the given byte index.
  *
  * @param index: The byte index to access
  * @param bytes: The byte sequence to access
- * @returns A 32-bit integer representing a signed 8-bit integer that starts at the given index
+ * @returns A signed 8-bit integer that starts at the given index
  *
- * @since v0.3.2
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 1` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(1)
+ * Bytes.setInt8(0, 1s, bytes)
+ * assert Bytes.getInt8(0, bytes) == 1s
+ *
+ * @since v0.6.0
+ * @history v0.3.2: Originally called `getInt8S`, returning an `Int32`
  */
-@disableGC
-export let rec getInt8S = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getInt8 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT8_BYTE_SIZE, size)
   let n = WasmI32.load8S(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt8S))
-  ret
-}
-
-/**
- * Gets an unsigned 8-bit integer starting at the given byte index.
- *
- * @param index: The byte index to access
- * @param bytes: The byte sequence to access
- * @returns A 32-bit integer representing an unsigned 8-bit integer that starts at the given index
- *
- * @since v0.3.2
- */
-@disableGC
-export let rec getInt8U = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
-  let ptr = WasmI32.fromGrain(bytes)
-  let size = getSize(ptr)
-  let offset = coerceNumberToWasmI32(index)
-  checkIndexIsInBounds(offset, _INT8_BYTE_SIZE, size)
-  let n = WasmI32.load8U(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt8U))
-  ret
+  tagInt8(n)
 }
 
 /**
@@ -426,22 +421,83 @@ export let rec getInt8U = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 1` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(1)
+ * Bytes.setInt8(0, 2s, bytes)
+ * assert Bytes.getInt8(0, bytes) == 2s
+ *
  * @since v0.3.2
+ * @history v0.6.0: `value` argument type changed to `Int8`
  */
-@disableGC
-export let rec setInt8 = (index: Number, value: Int32, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setInt8 = (index: Number, value: Int8, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT8_BYTE_SIZE, size)
-  let v = Conv.fromInt32(value)
-  let ret = WasmI32.store8(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setInt8))
-  ret
+  let v = untagInt8(value)
+  WasmI32.store8(ptr + offset, v, _VALUE_OFFSET)
+}
+
+/**
+ * Gets an unsigned 8-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to access
+ * @param bytes: The byte sequence to access
+ * @returns An unsigned 8-bit integer that starts at the given index
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 1` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(1)
+ * Bytes.setUint8(0, 1us, bytes)
+ * assert Bytes.getUint8(0, bytes) == 1us
+ *
+ * @since v0.6.0
+ * @history v0.3.2: Originally called `getInt8U`, returning an `Int32`
+ */
+@unsafe
+provide let getUint8 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT8_BYTE_SIZE, size)
+  let n = WasmI32.load8U(ptr + offset, _VALUE_OFFSET)
+  tagUint8(n)
+}
+
+/**
+ * Sets an unsigned 8-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to update
+ * @param value: The value to set
+ * @param bytes: The byte sequence to mutate
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 1` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(2)
+ * Bytes.setUint8(1, 2us, bytes)
+ * assert Bytes.getUint8(1, bytes) == 2us
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let setUint8 = (index: Number, value: Uint8, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT8_BYTE_SIZE, size)
+  let v = untagUint8(value)
+  WasmI32.store8(ptr + offset, v, _VALUE_OFFSET)
 }
 
 /**
@@ -449,47 +505,28 @@ export let rec setInt8 = (index: Number, value: Int32, bytes: Bytes) => {
  *
  * @param index: The byte index to access
  * @param bytes: The byte sequence to access
- * @returns A 32-bit integer representing a signed 16-bit integer that starts at the given index
+ * @returns A signed 16-bit integer that starts at the given index
  *
- * @since v0.3.2
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 2` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(2)
+ * Bytes.setInt16(0, -2S, bytes)
+ * assert Bytes.getInt16(0, bytes) == -2S
+ *
+ * @since v0.6.0
+ * @history v0.3.2: Originally called `getInt16S`, returning an `Int32`
  */
-@disableGC
-export let rec getInt16S = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getInt16 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT16_BYTE_SIZE, size)
   let n = WasmI32.load16S(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt16S))
-  ret
-}
-
-/**
- * Gets an unsigned 16-bit integer starting at the given byte index.
- *
- * @param index: The byte index to access
- * @param bytes: The byte sequence to access
- * @returns A 32-bit integer representing an unsigned 16-bit integer that starts at the given index
- *
- * @since v0.3.2
- */
-@disableGC
-export let rec getInt16U = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
-  let ptr = WasmI32.fromGrain(bytes)
-  let size = getSize(ptr)
-  let offset = coerceNumberToWasmI32(index)
-  checkIndexIsInBounds(offset, _INT16_BYTE_SIZE, size)
-  let n = WasmI32.load16U(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt16U))
-  ret
+  tagInt16(n)
 }
 
 /**
@@ -499,22 +536,83 @@ export let rec getInt16U = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 2` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(2)
+ * Bytes.setInt16(0, -1S, bytes)
+ * assert Bytes.getInt16(0, bytes) == -1S
+ *
  * @since v0.3.2
+ * @history v0.6.0: `value` argument type changed to `Int16`
  */
-@disableGC
-export let rec setInt16 = (index: Number, value: Int32, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setInt16 = (index: Number, value: Int16, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT16_BYTE_SIZE, size)
-  let v = Conv.fromInt32(value)
-  let ret = WasmI32.store16(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setInt16))
-  ret
+  let v = untagInt16(value)
+  WasmI32.store16(ptr + offset, v, _VALUE_OFFSET)
+}
+
+/**
+ * Gets an unsigned 16-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to access
+ * @param bytes: The byte sequence to access
+ * @returns An unsigned 16-bit integer that starts at the given index
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 2` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(2)
+ * Bytes.setUint16(0, 2uS, bytes)
+ * assert Bytes.getUint16(0, bytes) == 2uS
+ *
+ * @since v0.6.0
+ * @history v0.3.2: Originally called `getInt16U`, returning an `Int32`
+ */
+@unsafe
+provide let getUint16 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT16_BYTE_SIZE, size)
+  let n = WasmI32.load16U(ptr + offset, _VALUE_OFFSET)
+  tagUint16(n)
+}
+
+/**
+ * Sets an unsigned 16-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to update
+ * @param value: The value to set
+ * @param bytes: The byte sequence to mutate
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 2` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(2)
+ * Bytes.setUint16(0, 2uS, bytes)
+ * assert Bytes.getUint16(0, bytes) == 2uS
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let setUint16 = (index: Number, value: Uint16, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT16_BYTE_SIZE, size)
+  let v = untagUint16(value)
+  WasmI32.store16(ptr + offset, v, _VALUE_OFFSET)
 }
 
 /**
@@ -524,21 +622,25 @@ export let rec setInt16 = (index: Number, value: Int32, bytes: Bytes) => {
  * @param bytes: The byte sequence to access
  * @returns A signed 32-bit integer that starts at the given index
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setInt32(0, 1l, bytes)
+ * assert Bytes.getInt32(0, bytes) == 1l
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec getInt32 = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getInt32 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
   let n = WasmI32.load(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt32))
-  ret
+  Conv.toInt32(n)
 }
 
 /**
@@ -548,22 +650,81 @@ export let rec getInt32 = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setInt32(0, 1l, bytes)
+ * assert Bytes.getInt32(0, bytes) == 1l
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec setInt32 = (index: Number, value: Int32, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setInt32 = (index: Number, value: Int32, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
   let v = Conv.fromInt32(value)
-  let ret = WasmI32.store(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setInt32))
-  ret
+  WasmI32.store(ptr + offset, v, _VALUE_OFFSET)
+}
+
+/**
+ * Gets an unsigned 32-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to access
+ * @param bytes: The byte sequence to access
+ * @returns An unsigned 32-bit integer that starts at the given index
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setUint32(0, 1ul, bytes)
+ * assert Bytes.getUint32(0, bytes) == 1ul
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let getUint32 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
+  let n = WasmI32.load(ptr + offset, _VALUE_OFFSET)
+  Conv.toUint32(n)
+}
+
+/**
+ * Sets an unsigned 32-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to update
+ * @param value: The value to set
+ * @param bytes: The byte sequence to mutate
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setUint32(0, 1ul, bytes)
+ * assert Bytes.getUint32(0, bytes) == 1ul
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let setUint32 = (index: Number, value: Uint32, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
+  let v = Conv.fromUint32(value)
+  WasmI32.store(ptr + offset, v, _VALUE_OFFSET)
 }
 
 /**
@@ -573,21 +734,25 @@ export let rec setInt32 = (index: Number, value: Int32, bytes: Bytes) => {
  * @param bytes: The byte sequence to access
  * @returns A 32-bit float that starts at the given index
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setFloat32(0, 1.0f, bytes)
+ * assert Bytes.getFloat32(0, bytes) == 1.0f
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec getFloat32 = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getFloat32 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
   let n = WasmF32.load(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toFloat32(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getFloat32))
-  ret
+  Conv.toFloat32(n)
 }
 
 /**
@@ -597,22 +762,25 @@ export let rec getFloat32 = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 4` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(4)
+ * Bytes.setFloat32(0, 1.0f, bytes)
+ * assert Bytes.getFloat32(0, bytes) == 1.0f
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec setFloat32 = (index: Number, value: Float32, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setFloat32 = (index: Number, value: Float32, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT32_BYTE_SIZE, size)
   let v = Conv.fromFloat32(value)
-  let ret = WasmF32.store(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setFloat32))
-  ret
+  WasmF32.store(ptr + offset, v, _VALUE_OFFSET)
 }
 
 /**
@@ -622,21 +790,25 @@ export let rec setFloat32 = (index: Number, value: Float32, bytes: Bytes) => {
  * @param bytes: The byte sequence to access
  * @returns A signed 64-bit integer that starts at the given index
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setInt64(0, 1L, bytes)
+ * assert Bytes.getInt64(0, bytes) == 1L
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec getInt64 = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getInt64 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT64_BYTE_SIZE, size)
   let n = WasmI64.load(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toInt64(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getInt64))
-  ret
+  Conv.toInt64(n)
 }
 
 /**
@@ -646,22 +818,81 @@ export let rec getInt64 = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setInt64(0, 1L, bytes)
+ * assert Bytes.getInt64(0, bytes) == 1L
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec setInt64 = (index: Number, value: Int64, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setInt64 = (index: Number, value: Int64, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _INT64_BYTE_SIZE, size)
   let v = Conv.fromInt64(value)
-  let ret = WasmI64.store(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setInt64))
-  ret
+  WasmI64.store(ptr + offset, v, _VALUE_OFFSET)
+}
+
+/**
+ * Gets an unsigned 64-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to access
+ * @param bytes: The byte sequence to access
+ * @returns An unsigned 64-bit integer that starts at the given index
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setUint64(0, 1uL, bytes)
+ * assert Bytes.getUint64(0, bytes) == 1uL
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let getUint64 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT64_BYTE_SIZE, size)
+  let n = WasmI64.load(ptr + offset, _VALUE_OFFSET)
+  Conv.toUint64(n)
+}
+
+/**
+ * Sets an unsigned 64-bit integer starting at the given byte index.
+ *
+ * @param index: The byte index to update
+ * @param value: The value to set
+ * @param bytes: The byte sequence to mutate
+ *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setUint64(0, 1uL, bytes)
+ * assert Bytes.getUint64(0, bytes) == 1uL
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let setUint64 = (index: Number, value: Uint64, bytes: Bytes) => {
+  use WasmI32.{ (+) }
+  let ptr = WasmI32.fromGrain(bytes)
+  let size = getSize(ptr)
+  let offset = coerceNumberToWasmI32(index)
+  checkIndexIsInBounds(offset, _INT64_BYTE_SIZE, size)
+  let v = Conv.fromUint64(value)
+  WasmI64.store(ptr + offset, v, _VALUE_OFFSET)
 }
 
 /**
@@ -671,21 +902,25 @@ export let rec setInt64 = (index: Number, value: Int64, bytes: Bytes) => {
  * @param bytes: The byte sequence to access
  * @returns A 64-bit float that starts at the given index
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setFloat64(0, 1.0d, bytes)
+ * assert Bytes.getFloat64(0, bytes) == 1.0d
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec getFloat64 = (index: Number, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let getFloat64 = (index: Number, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _FLOAT64_BYTE_SIZE, size)
   let n = WasmF64.load(ptr + offset, _VALUE_OFFSET)
-  let ret = Conv.toFloat64(n)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(getFloat64))
-  ret
+  Conv.toFloat64(n)
 }
 
 /**
@@ -695,20 +930,23 @@ export let rec getFloat64 = (index: Number, bytes: Bytes) => {
  * @param value: The value to set
  * @param bytes: The byte sequence to mutate
  *
+ * @throws IndexOutOfBounds: When `index` is negative
+ * @throws IndexOutOfBounds: When `index + 8` is greater than the bytes size
+ *
+ * @example
+ * let bytes = Bytes.make(8)
+ * Bytes.setFloat64(0, 1.0d, bytes)
+ * assert Bytes.getFloat64(0, bytes) == 1.0d
+ *
  * @since v0.3.2
  */
-@disableGC
-export let rec setFloat64 = (index: Number, value: Float64, bytes: Bytes) => {
-  let (+) = WasmI32.add
+@unsafe
+provide let setFloat64 = (index: Number, value: Float64, bytes: Bytes) => {
+  use WasmI32.{ (+) }
   let ptr = WasmI32.fromGrain(bytes)
   let size = getSize(ptr)
   let offset = coerceNumberToWasmI32(index)
   checkIndexIsInBounds(offset, _FLOAT64_BYTE_SIZE, size)
   let v = Conv.fromFloat64(value)
-  let ret = WasmF64.store(ptr + offset, v, _VALUE_OFFSET)
-  Memory.decRef(WasmI32.fromGrain(index))
-  Memory.decRef(WasmI32.fromGrain(value))
-  Memory.decRef(WasmI32.fromGrain(bytes))
-  Memory.decRef(WasmI32.fromGrain(setFloat64))
-  ret
+  WasmF64.store(ptr + offset, v, _VALUE_OFFSET)
 }

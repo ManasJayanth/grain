@@ -1,366 +1,548 @@
-import WasmI32 from "runtime/unsafe/wasmi32"
-import Memory from "runtime/unsafe/memory"
-import Exception from "runtime/exception"
+/**
+ * Utilities for working with the Int32 type.
+ *
+ * @example from "int32" include Int32
+ *
+ * @since v0.2.0
+ */
+module Int32
 
-import {
-  newInt32
-} from "runtime/dataStructures"
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{
+  (+),
+  (-),
+  (*),
+  (/),
+  (&),
+  (|),
+  (^),
+  (<<),
+  (>>),
+  (==),
+  (!=),
+  (<),
+  (<=),
+  (>),
+  (>=),
+}
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/exception" include Exception
 
-import {
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ newInt32 }
+
+from "runtime/numbers" include Numbers
+use Numbers.{
   coerceNumberToInt32 as fromNumber,
-  coerceInt32ToNumber as toNumber
-} from "runtime/numbers"
-
-export fromNumber
-export toNumber
-
-@disableGC
-export let rec incr = (n: Int32) => {
-  let n = WasmI32.fromGrain(n)
-  let ptr = newInt32(WasmI32.add(WasmI32.load(n, 8n), 1n))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(n)
-  Memory.decRef(WasmI32.fromGrain(incr))
-  ret
+  coerceInt32ToNumber as toNumber,
 }
 
-@disableGC
-export let rec decr = (n: Int32) => {
-  let n = WasmI32.fromGrain(n)
-  let ptr = newInt32(WasmI32.sub(WasmI32.load(n, 8n), 1n))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(n)
-  Memory.decRef(WasmI32.fromGrain(decr))
-  ret
+@unsafe
+let _VALUE_OFFSET = 4n
+
+provide { fromNumber, toNumber }
+
+/**
+ * Converts a Uint32 to an Int32.
+ *
+ * @param number: The value to convert
+ * @returns The Uint32 represented as an Int32
+ *
+ * @since v0.6.0
+ */
+@unsafe
+provide let fromUint32 = (number: Uint32) => {
+  let x = WasmI32.load(WasmI32.fromGrain(number), _VALUE_OFFSET)
+  let result = newInt32(x)
+  WasmI32.toGrain(result): Int32
 }
 
-@disableGC
-export let rec add = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.add(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(add))
-  ret
+/**
+ * Increments the value by one.
+ *
+ * @param value: The value to increment
+ * @returns The incremented value
+ *
+ * @since v0.2.0
+ */
+@unsafe
+provide let incr = (value: Int32) => {
+  let value = WasmI32.fromGrain(value)
+  let ptr = newInt32(WasmI32.load(value, _VALUE_OFFSET) + 1n)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec sub = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.sub(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(sub))
-  ret
+/**
+ * Decrements the value by one.
+ *
+ * @param value: The value to decrement
+ * @returns The decremented value
+ *
+ * @since v0.2.0
+ */
+@unsafe
+provide let decr = (value: Int32) => {
+  let value = WasmI32.fromGrain(value)
+  let ptr = newInt32(WasmI32.load(value, _VALUE_OFFSET) - 1n)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec mul = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.mul(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(mul))
-  ret
+/**
+ * Computes the sum of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The sum of the two operands
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `add`
+ */
+@unsafe
+provide let (+) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv + yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec div = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.divS(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(div))
-  ret
+/**
+ * Computes the difference of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The difference of the two operands
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `sub`
+ */
+@unsafe
+provide let (-) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv - yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec divU = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.divU(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(divU))
-  ret
+/**
+ * Computes the product of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The product of the two operands
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `mul`
+ */
+@unsafe
+provide let (*) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv * yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec rem = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
+/**
+ * Computes the quotient of its operands using signed division.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The quotient of its operands
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `div`
+ */
+@unsafe
+provide let (/) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv / yv)
+  WasmI32.toGrain(ptr): Int32
+}
+
+/**
+ * Computes the remainder of the division of its operands using signed division.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The remainder of its operands
+ *
+ * @since v0.2.0
+ */
+@unsafe
+provide let rem = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
   let ptr = newInt32(WasmI32.remS(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(rem))
-  ret
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec remU = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.remU(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(remU))
-  ret
+@unsafe
+let abs = n => {
+  use WasmI32.{ (-) }
+  let mask = n >> 31n
+  (n ^ mask) - mask
 }
 
-@disableGC
-let abs = (n) => {
-  let mask = WasmI32.shrS(n, 31n)
-  WasmI32.sub(WasmI32.xor(n, mask), mask)
-}
-
-@disableGC
-export let rec mod = (x: Int32, y: Int32) => {
-  let xval = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yval = WasmI32.load(WasmI32.fromGrain(y), 8n)
+/**
+ * Computes the remainder of the division of the first operand by the second.
+ * The result will have the sign of the second operand.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The modulus of its operands
+ *
+ * @throws ModuloByZero: When `y` is zero
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `mod`
+ */
+@unsafe
+provide let (%) = (x: Int32, y: Int32) => {
+  use WasmI32.{ (-) }
+  let xval = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yval = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
 
   if (WasmI32.eqz(yval)) {
     throw Exception.ModuloByZero
   }
 
-  let ptr = if (WasmI32.ltS(WasmI32.xor(xval, yval), 0n)) {
+  let ptr = if ((xval ^ yval) < 0n) {
     let xabs = abs(xval)
     let yabs = abs(yval)
     let mval = WasmI32.remS(xabs, yabs)
-    let mres = WasmI32.sub(yabs, mval)
-    newInt32(if (WasmI32.ne(mval, 0n)) (if (WasmI32.ltS(yval, 0n)) WasmI32.sub(0n, mres) else mres) else 0n)
+    let mres = yabs - mval
+    newInt32(if (mval != 0n) (if (yval < 0n) 0n - mres else mres) else 0n)
   } else {
     newInt32(WasmI32.remS(xval, yval))
   }
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(mod))
-  ret
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec clz = (n: Int32) => {
-  let nv = WasmI32.load(WasmI32.fromGrain(n), 8n)
-  let ptr = newInt32(WasmI32.clz(nv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(n))
-  Memory.decRef(WasmI32.fromGrain(clz))
-  ret
-}
-
-@disableGC
-export let rec ctz = (n: Int32) => {
-  let nv = WasmI32.load(WasmI32.fromGrain(n), 8n)
-  let ptr = newInt32(WasmI32.ctz(nv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(n))
-  Memory.decRef(WasmI32.fromGrain(ctz))
-  ret
-}
-
-@disableGC
-export let rec popcnt = (n: Int32) => {
-  let nv = WasmI32.load(WasmI32.fromGrain(n), 8n)
-  let ptr = newInt32(WasmI32.popcnt(nv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(n))
-  Memory.decRef(WasmI32.fromGrain(popcnt))
-  ret
-}
-
-@disableGC
-export let rec rotl = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
+/**
+ * Rotates the bits of the value left by the given number of bits.
+ *
+ * @param value: The value to rotate
+ * @param amount: The number of bits to rotate by
+ * @returns The rotated value
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let rotl = (value: Int32, amount: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(amount), _VALUE_OFFSET)
   let ptr = newInt32(WasmI32.rotl(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(rotl))
-  ret
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec rotr = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
+/**
+ * Rotates the bits of the value right by the given number of bits.
+ *
+ * @param value: The value to rotate
+ * @param amount: The number of bits to rotate by
+ * @returns The rotated value
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let rotr = (value: Int32, amount: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(amount), _VALUE_OFFSET)
   let ptr = newInt32(WasmI32.rotr(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(rotr))
-  ret
+  WasmI32.toGrain(ptr): Int32
 }
 
-// Int32 comparisons
-
-@disableGC
-export let rec eq = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.eq(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(eq))
-  ret
+/**
+ * Shifts the bits of the value left by the given number of bits.
+ *
+ * @param value: The value to shift
+ * @param amount: The number of bits to shift by
+ * @returns The shifted value
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `shl`
+ */
+@unsafe
+provide let (<<) = (value: Int32, amount: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(amount), _VALUE_OFFSET)
+  let ptr = newInt32(xv << yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec ne = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.ne(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(ne))
-  ret
+/**
+ * Shifts the bits of the value right by the given number of bits, preserving the sign bit.
+ *
+ * @param value: The value to shift
+ * @param amount: The amount to shift by
+ * @returns The shifted value
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `shr`
+ */
+@unsafe
+provide let (>>) = (value: Int32, amount: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(amount), _VALUE_OFFSET)
+  let ptr = newInt32(xv >> yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec eqz = (n: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(n), 8n)
-  let ret = WasmI32.eqz(xv)
-  Memory.decRef(WasmI32.fromGrain(n))
-  Memory.decRef(WasmI32.fromGrain(eqz))
-  ret
+/**
+ * Checks if the first value is equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is equal to the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.4.0: Originally named `eq`
+ */
+@unsafe
+provide let (==) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv == yv
 }
 
-@disableGC
-export let rec lt = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.ltS(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lt))
-  ret
+/**
+ * Checks if the first value is not equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is not equal to the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.4.0: Originally named `ne`
+ */
+@unsafe
+provide let (!=) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv != yv
 }
 
-@disableGC
-export let rec gt = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.gtS(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gt))
-  ret
+/**
+ * Checks if the given value is equal to zero.
+ *
+ * @param value: The value to inspect
+ * @returns `true` if the first value is equal to zero or `false` otherwise
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let eqz = (value: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  WasmI32.eqz(xv)
 }
 
-@disableGC
-export let rec lte = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.leS(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lte))
-  ret
+/**
+ * Checks if the first value is less than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lt`
+ */
+@unsafe
+provide let (<) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv < yv
 }
 
-@disableGC
-export let rec gte = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmI32.geS(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gte))
-  ret
+/**
+ * Checks if the first value is greater than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gt`
+ */
+@unsafe
+provide let (>) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv > yv
 }
 
-// Int32 bit/logical operations
-@disableGC
-export let rec lnot = (x: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let ptr = newInt32(WasmI32.xor(xv, 0xffffffffn))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(lnot))
-  ret
+/**
+ * Checks if the first value is less than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than or equal to the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lte`
+ */
+@unsafe
+provide let (<=) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv <= yv
 }
 
-
-@disableGC
-export let rec land = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.and(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(land))
-  ret
+/**
+ * Checks if the first value is greater than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than or equal to the second value or `false` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gte`
+ */
+@unsafe
+provide let (>=) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  xv >= yv
 }
 
-@disableGC
-export let rec lor = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.or(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lor))
-  ret
+/**
+ * Computes the bitwise NOT of the given value.
+ *
+ * @param value: The given value
+ * @returns Containing the inverted bits of the given value
+ *
+ * @since v0.2.0
+ */
+@unsafe
+provide let lnot = (value: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let ptr = newInt32(xv ^ 0xffffffffn)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec lxor = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.xor(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lxor))
-  ret
+/**
+ * Computes the bitwise AND (`&`) on the given operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns Containing a `1` in each bit position for which the corresponding bits of both operands are `1`
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `land`
+ */
+@unsafe
+provide let (&) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv & yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-
-@disableGC
-export let rec shl = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.shl(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(shl))
-  ret
+/**
+ * Computes the bitwise OR (`|`) on the given operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns Containing a `1` in each bit position for which the corresponding bits of either or both operands are `1`
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lor`
+ */
+@unsafe
+provide let (|) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv | yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec shr = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.shrS(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(shr))
-  ret
+/**
+ * Computes the bitwise XOR (`^`) on the given operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns Containing a `1` in each bit position for which the corresponding bits of either but not both operands are `1`
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lxor`
+ */
+@unsafe
+provide let (^) = (x: Int32, y: Int32) => {
+  let xv = WasmI32.load(WasmI32.fromGrain(x), _VALUE_OFFSET)
+  let yv = WasmI32.load(WasmI32.fromGrain(y), _VALUE_OFFSET)
+  let ptr = newInt32(xv ^ yv)
+  WasmI32.toGrain(ptr): Int32
 }
 
-@disableGC
-export let rec shrU = (x: Int32, y: Int32) => {
-  let xv = WasmI32.load(WasmI32.fromGrain(x), 8n)
-  let yv = WasmI32.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newInt32(WasmI32.shrU(xv, yv))
-  let ret = WasmI32.toGrain(ptr): Int32
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(shrU))
-  ret
+/**
+ * Counts the number of leading zero bits in the value.
+ *
+ * @param value: The value to inspect
+ * @returns The amount of leading zeros
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let clz = (value: Int32) => {
+  let nv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let ptr = newInt32(WasmI32.clz(nv))
+  WasmI32.toGrain(ptr): Int32
+}
+
+/**
+ * Counts the number of trailing zero bits in the value.
+ *
+ * @param value: The value to inspect
+ * @returns The amount of trailing zeros
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let ctz = (value: Int32) => {
+  let nv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let ptr = newInt32(WasmI32.ctz(nv))
+  WasmI32.toGrain(ptr): Int32
+}
+
+/**
+ * Counts the number of bits set to `1` in the value, also known as a population count.
+ *
+ * @param value: The value to inspect
+ * @returns The amount of 1-bits in its operand
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let popcnt = (value: Int32) => {
+  let nv = WasmI32.load(WasmI32.fromGrain(value), _VALUE_OFFSET)
+  let ptr = newInt32(WasmI32.popcnt(nv))
+  WasmI32.toGrain(ptr): Int32
+}
+
+// Exponentiation by squaring https://en.wikipedia.org/wiki/Exponentiation_by_squaring special path for int^int
+let rec expBySquaring = (y, x, n) => {
+  if (n == 0l) {
+    1l
+  } else if (n == 1l) {
+    x * y
+  } else if (n % 2l == 0l) {
+    expBySquaring(y, x * x, n / 2l)
+  } else {
+    expBySquaring(x * y, x * x, (n - 1l) / 2l)
+  }
+}
+
+/**
+ * Computes the exponentiation of the given base and power.
+ *
+ * @param base: The base number
+ * @param power: The exponent number
+ * @returns The base raised to the given power
+ *
+ * @since v0.6.0
+ */
+provide let (**) = (base, power) => {
+  if (power < 0l)
+    return expBySquaring(1l, 1l / base, power * -1l)
+  else
+    return expBySquaring(1l, base, power)
 }

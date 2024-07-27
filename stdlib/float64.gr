@@ -1,131 +1,246 @@
-import WasmI32 from "runtime/unsafe/wasmi32"
-import WasmF64 from "runtime/unsafe/wasmf64"
-import Memory from "runtime/unsafe/memory"
-import {
-  newFloat64
-} from "runtime/dataStructures"
+/**
+ * Utilities for working with the Float64 type.
+ *
+ * @example from "float64" include Float64
+ *
+ * @example 5.0d
+ * @example -5.0d
+ * @example Infinityd
+ * @example NaNd
+ *
+ * @since v0.2.0
+ */
+module Float64
 
-import {
+from "runtime/unsafe/wasmi32" include WasmI32
+from "runtime/unsafe/wasmf64" include WasmF64
+use WasmF64.{ (-), (+), (*), (/), (<), (<=), (>), (>=) }
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ newFloat64 }
+
+from "runtime/numbers" include Numbers
+use Numbers.{
   coerceNumberToFloat64 as fromNumber,
-  coerceFloat64ToNumber as toNumber
-} from "runtime/numbers"
+  coerceFloat64ToNumber as toNumber,
+}
 
-export fromNumber
-export toNumber
+/**
+ * Infinity represented as a Float64 value.
+ * This is an alternative to the `Infinityd` literal.
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let infinity = Infinityd
 
+/**
+ * NaN (Not a Number) represented as a Float64 value.
+ * This is an alternative to the `NaNd` literal.
+ *
+ * @since v0.4.0
+ */
+@unsafe
+provide let nan = NaNd
 
-@disableGC
-export let rec add = (x: Float64, y: Float64) => {
+/**
+ * Pi represented as a Float64 value.
+ *
+ * @since v0.5.2
+ */
+provide let pi = 3.141592653589793d
+
+/**
+ * Tau represented as a Float64 value.
+ *
+ * @since v0.5.2
+ */
+provide let tau = 6.283185307179586d
+
+/**
+ * Euler's number represented as a Float64 value.
+ *
+ * @since v0.5.2
+ */
+provide let e = 2.718281828459045d
+
+provide { fromNumber, toNumber }
+
+/**
+ * Computes the sum of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The sum of the two operands
+ *
+ * @example
+ * use Float64.{ (+) }
+ * assert 1.0d + 1.0d == 2.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `add`
+ */
+@unsafe
+provide let (+) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat64(WasmF64.add(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(add))
-  ret
+  let ptr = newFloat64(xv + yv)
+  WasmI32.toGrain(ptr): Float64
 }
 
-@disableGC
-export let rec sub = (x: Float64, y: Float64) => {
+/**
+ * Computes the difference of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The difference of the two operands
+ *
+ * @example
+ * use Float64.{ (-) }
+ * assert 5.0d - 4.0d == 1.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `sub`
+ */
+@unsafe
+provide let (-) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat64(WasmF64.sub(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(sub))
-  ret
+  let ptr = newFloat64(xv - yv)
+  WasmI32.toGrain(ptr): Float64
 }
 
-@disableGC
-export let rec mul = (x: Float64, y: Float64) => {
+/**
+ * Computes the product of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The product of the two operands
+ *
+ * @example
+ * use Float64.{ (*) }
+ * assert -5.0d * 4.0d == -20.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `mul`
+ */
+@unsafe
+provide let (*) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat64(WasmF64.mul(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(mul))
-  ret
+  let ptr = newFloat64(xv * yv)
+  WasmI32.toGrain(ptr): Float64
 }
 
-@disableGC
-export let rec div = (x: Float64, y: Float64) => {
+/**
+ * Computes the quotient of its operands.
+ *
+ * @param x: The first operand
+ * @param y: The second operand
+ * @returns The quotient of the two operands
+ *
+ * @example
+ * use Float64.{ (/) }
+ * assert 25.0d / 4.0d == 6.25d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `div`
+ */
+@unsafe
+provide let (/) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ptr = newFloat64(WasmF64.div(xv, yv))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(div))
-  ret
+  let ptr = newFloat64(xv / yv)
+  WasmI32.toGrain(ptr): Float64
 }
 
-
-// Float64 comparisons
-@disableGC
-export let rec lt = (x: Float64, y: Float64) => {
+/**
+ * Checks if the first value is less than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than the second value or `false` otherwise
+ *
+ * @example
+ * use Float64.{ (<) }
+ * assert -5.0d < 5.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lt`
+ */
+@unsafe
+provide let (<) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF64.lt(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lt))
-  ret
+  xv < yv
 }
 
-@disableGC
-export let rec gt = (x: Float64, y: Float64) => {
+/**
+ * Checks if the first value is greater than the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than the second value or `false` otherwise
+ *
+ * @example
+ * use Float64.{ (>) }
+ * assert 6.0d > 5.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gt`
+ */
+@unsafe
+provide let (>) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF64.gt(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gt))
-  ret
+  xv > yv
 }
 
-@disableGC
-export let rec lte = (x: Float64, y: Float64) => {
+/**
+ * Checks if the first value is less than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is less than or equal to the second value or `false` otherwise
+ *
+ * @example
+ * use Float64.{ (<=) }
+ * assert 1.0d <= 2.0d
+ *
+ * @example
+ * use Float64.{ (<=) }
+ * assert 2.0d <= 2.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `lte`
+ */
+@unsafe
+provide let (<=) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF64.le(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(lte))
-  ret
+  xv <= yv
 }
 
-@disableGC
-export let rec gte = (x: Float64, y: Float64) => {
+/**
+ * Checks if the first value is greater than or equal to the second value.
+ *
+ * @param x: The first value
+ * @param y: The second value
+ * @returns `true` if the first value is greater than or equal to the second value or `false` otherwise
+ *
+ * @example
+ * use Float64.{ (>=) }
+ * assert 5.0d >= 2.0d
+ *
+ * @example
+ * use Float64.{ (>=) }
+ * assert -1.0d >= -1.0d
+ *
+ * @since v0.6.0
+ * @history v0.2.0: Originally named `gte`
+ */
+@unsafe
+provide let (>=) = (x: Float64, y: Float64) => {
   let xv = WasmF64.load(WasmI32.fromGrain(x), 8n)
   let yv = WasmF64.load(WasmI32.fromGrain(y), 8n)
-  let ret = WasmF64.ge(xv, yv)
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(gte))
-  ret
+  xv >= yv
 }
-
-// floating-point constants:
-
-@disableGC
-let rec makeInfinity = () => {
-  let ptr = newFloat64(WasmF64.reinterpretI64(0b0111111111110000000000000000000000000000000000000000000000000000N))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(makeInfinity))
-  ret
-}
-
-export let infinity = makeInfinity()
-
-@disableGC
-let rec makeNaN = () => {
-  let ptr = newFloat64(WasmF64.reinterpretI64(0b0111111111110000000000000000000000000000000000000000000000000001N))
-  let ret = WasmI32.toGrain(ptr) : Float64
-  Memory.decRef(WasmI32.fromGrain(makeNaN))
-  ret
-}
-
-export let nan = makeNaN()

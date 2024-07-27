@@ -56,7 +56,7 @@ module MakeMap =
       | TTyAny
       | TTyVar(_) => ct.ctyp_desc
       | TTyArrow(args, ret) =>
-        let args = List.map(map_core_type, args);
+        let args = List.map(((l, arg)) => (l, map_core_type(arg)), args);
         let ret = map_core_type(ret);
         TTyArrow(args, ret);
       | TTyConstr(a, b, args) =>
@@ -82,10 +82,11 @@ module MakeMap =
   and map_bindings = (rec_flag, mut_flag, binds) =>
     List.map(map_binding, binds)
 
-  and map_match_branch = ({mb_pat, mb_body} as mb) => {
+  and map_match_branch = ({mb_pat, mb_body, mb_guard} as mb) => {
     let mb_pat = map_pattern(mb_pat);
     let mb_body = map_expression(mb_body);
-    {...mb, mb_pat, mb_body};
+    let mb_guard = Option.map(map_expression, mb_guard);
+    {...mb, mb_pat, mb_body, mb_guard};
   }
 
   and map_match_branches = branches => List.map(map_match_branch, branches)
@@ -93,6 +94,7 @@ module MakeMap =
   and map_constructor_arguments =
     fun
     | TConstrTuple(args) => TConstrTuple(List.map(map_core_type, args))
+    | TConstrRecord(rfs) => TConstrRecord(List.map(map_record_field, rfs))
     | TConstrSingleton as ca => ca
 
   and map_constructor_declaration = ({cd_args, cd_res} as cd) => {
@@ -128,15 +130,15 @@ module MakeMap =
       | TTopData(decls) => TTopData(List.map(map_data_declaration, decls))
       | TTopException(_)
       | TTopForeign(_)
-      | TTopImport(_)
-      | TTopExport(_) => stmt.ttop_desc
-      | TTopLet(exportflag, recflag, mutflag, binds) =>
-        TTopLet(
-          exportflag,
-          recflag,
-          mutflag,
-          map_bindings(recflag, mutflag, binds),
-        )
+      | TTopInclude(_)
+      | TTopProvide(_) => stmt.ttop_desc
+      | TTopModule(decl) =>
+        TTopModule({
+          ...decl,
+          tmod_statements: map_toplevel_stmts(decl.tmod_statements),
+        })
+      | TTopLet(recflag, mutflag, binds) =>
+        TTopLet(recflag, mutflag, map_bindings(recflag, mutflag, binds))
       | TTopExpr(e) => TTopExpr(map_expression(e))
       };
     Map.leave_toplevel_stmt({...stmt, ttop_desc});
@@ -183,20 +185,39 @@ module MakeMap =
     (cstr, loc);
   }
 
+  and map_record_fields = rfs => {
+    Array.map(
+      rf =>
+        switch (rf) {
+        | (desc, Overridden(name, expr)) => (
+            desc,
+            Overridden(name, map_expression(expr)),
+          )
+        | (desc, def) => (desc, def)
+        },
+      rfs,
+    );
+  }
+
   and map_expression = exp => {
     let exp = Map.enter_expression(exp);
     let exp_extra = List.map(map_exp_extra, exp.exp_extra);
     let exp_desc =
       switch (exp.exp_desc) {
-      | TExpNull
+      | TExpUse(_)
       | TExpIdent(_)
       | TExpConstant(_) => exp.exp_desc
       | TExpLet(recflag, mutflag, binds) =>
         TExpLet(recflag, mutflag, map_bindings(recflag, mutflag, binds))
       | TExpLambda(branches, p) =>
         TExpLambda(map_match_branches(branches), p)
-      | TExpApp(exp, args) =>
-        TExpApp(map_expression(exp), List.map(map_expression, args))
+      | TExpApp(exp, labels, args) =>
+        TExpApp(
+          map_expression(exp),
+          labels,
+          List.map(((l, arg)) => (l, map_expression(arg)), args),
+        )
+      | TExpPrim0(o) => TExpPrim0(o)
       | TExpPrim1(o, e) => TExpPrim1(o, map_expression(e))
       | TExpPrim2(o, e1, e2) =>
         TExpPrim2(o, map_expression(e1), map_expression(e2))
@@ -211,24 +232,15 @@ module MakeMap =
       | TExpArray(args) => TExpArray(List.map(map_expression, args))
       | TExpArrayGet(a1, a2) =>
         TExpArrayGet(map_expression(a1), map_expression(a2))
-      | TExpArraySet(a1, a2, a3) =>
-        TExpArraySet(
-          map_expression(a1),
-          map_expression(a2),
-          map_expression(a3),
-        )
-      | TExpRecord(args) =>
-        TExpRecord(
-          Array.map(
-            fun
-            | (desc, Overridden(name, expr)) => (
-                desc,
-                Overridden(name, map_expression(expr)),
-              )
-            | (desc, def) => (desc, def),
-            args,
-          ),
-        )
+      | TExpArraySet({array, index, value, infix_op}) =>
+        TExpArraySet({
+          array: map_expression(array),
+          index: map_expression(index),
+          value: map_expression(value),
+          infix_op: Option.map(map_expression, infix_op),
+        })
+      | TExpRecord(b, args) =>
+        TExpRecord(Option.map(map_expression, b), map_record_fields(args))
       | TExpRecordGet(record, field, ld) =>
         TExpRecordGet(map_expression(record), field, ld)
       | TExpRecordSet(record, field, ld, arg) =>
@@ -239,8 +251,10 @@ module MakeMap =
           map_expression(arg),
         )
       | TExpBlock(args) => TExpBlock(List.map(map_expression, args))
-      | TExpConstruct(a, b, args) =>
-        TExpConstruct(a, b, List.map(map_expression, args))
+      | TExpConstruct(a, b, TExpConstrTuple(args)) =>
+        TExpConstruct(a, b, TExpConstrTuple(List.map(map_expression, args)))
+      | TExpConstruct(a, b, TExpConstrRecord(args)) =>
+        TExpConstruct(a, b, TExpConstrRecord(map_record_fields(args)))
       | TExpIf(c, t, f) =>
         TExpIf(map_expression(c), map_expression(t), map_expression(f))
       | TExpWhile(c, b) => TExpWhile(map_expression(c), map_expression(b))
@@ -253,6 +267,7 @@ module MakeMap =
         )
       | TExpContinue => TExpContinue
       | TExpBreak => TExpBreak
+      | TExpReturn(e) => TExpReturn(Option.map(map_expression, e))
       };
     Map.leave_expression({...exp, exp_extra, exp_desc});
   };

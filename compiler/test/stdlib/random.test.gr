@@ -1,0 +1,27 @@
+module RandomTest
+
+from "random" include Random
+
+let rng1 = Random.make(0xf00uL)
+let rng2 = Random.make(0xf00uL)
+
+assert Random.nextUint32(rng1) == 833494444ul
+assert Random.nextUint32(rng2) == 833494444ul
+assert Random.nextUint32(rng1) == 2548774292ul
+assert Random.nextUint32(rng2) == 2548774292ul
+
+assert Random.nextUint32(rng1) == Random.nextUint32(rng2)
+assert Random.nextUint64(rng1) == Random.nextUint64(rng2)
+assert Random.nextUint64(rng1) == Random.nextUint64(rng2)
+
+assert Random.nextUint64(rng1) == 16383595145868481139uL
+assert Random.nextUint64(rng2) == 16383595145868481139uL
+assert Random.nextUint64(rng1) != 16383595145868481139uL
+
+assert Random.nextUint32InRange(rng1, 5ul, 20ul) == 5ul
+assert Random.nextUint32InRange(rng1, 5ul, 20ul) == 18ul
+assert Random.nextUint32InRange(rng1, 5ul, 20ul) == 19ul
+
+assert Random.nextUint64InRange(rng1, 5uL, 20uL) == 18uL
+assert Random.nextUint64InRange(rng1, 5uL, 20uL) == 10uL
+assert Random.nextUint64InRange(rng1, 5uL, 20uL) == 11uL

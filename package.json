@@ -1,24 +1,22 @@
 {
   "name": "grain",
   "private": true,
-  "version": "0.4.5",
+  "version": "0.6.4",
   "description": "The Grain monorepo.",
   "workspaces": [
     "cli",
-    "js-runner",
     "stdlib",
     "compiler"
   ],
   "engines": {
-    "node": ">=14"
+    "node": ">=18.15"
   },
   "scripts": {
-    "prepare": "yarn js-runner build && yarn cli link",
-    "test": "yarn compiler test",
-    "cli": "yarn workspace @grain/cli run",
-    "js-runner": "yarn workspace @grain/js-runner run",
-    "compiler": "yarn workspace @grain/compiler run",
-    "stdlib": "yarn workspace @grain/stdlib run",
-    "postcompiler": "yarn stdlib clean"
+    "prepare": "npm run cli link",
+    "test": "npm run compiler test --",
+    "cli": "npm run --workspace=@grain/cli --",
+    "compiler": "npm run --workspace=@grain/compiler --",
+    "stdlib": "npm run --workspace=@grain/stdlib --",
+    "postcompiler": "npm run stdlib clean"
   }
 }

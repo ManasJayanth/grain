@@ -1,0 +1,77 @@
+/**
+ * System access to random values.
+ *
+ * @example from "wasi/random" include Random
+ */
+module Random
+
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{ (==), (!=) }
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/memory" include Memory
+from "runtime/wasi" include Wasi
+from "runtime/dataStructures" include DataStructures
+use DataStructures.{ tagSimpleNumber, newUint32, newUint64 }
+
+/**
+ * Produce a random 32-bit integer. This function can be slow, so it's best to seed a generator if lots of random data is needed.
+ *
+ * @returns `Ok(num)` of a random Uint32 if successful or `Err(exception)` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `randomInt32`
+ */
+@unsafe
+provide let randomUint32 = () => {
+  let buf = Memory.malloc(4n)
+
+  let err = Wasi.random_get(buf, 4n)
+  if (err != Wasi._ESUCCESS) {
+    Memory.free(buf)
+    return Err(Wasi.SystemError(tagSimpleNumber(err)))
+  }
+  let rand = WasmI32.load(buf, 0n)
+  Memory.free(buf)
+  return Ok(WasmI32.toGrain(newUint32(rand)): Uint32)
+}
+
+/**
+ * Produce a random 64-bit integer. This function can be slow, so it's best to seed a generator if lots of random data is needed.
+ *
+ * @returns `Ok(num)` of a random Uint64 if successful or `Err(exception)` otherwise
+ *
+ * @since v0.6.0
+ * @history v0.5.0: Originally named `randomInt64`
+ */
+@unsafe
+provide let randomUint64 = () => {
+  let buf = Memory.malloc(8n)
+
+  let err = Wasi.random_get(buf, 8n)
+  if (err != Wasi._ESUCCESS) {
+    Memory.free(buf)
+    return Err(Wasi.SystemError(tagSimpleNumber(err)))
+  }
+  let rand = WasmI64.load(buf, 0n)
+  Memory.free(buf)
+  return Ok(WasmI32.toGrain(newUint64(rand)): Uint64)
+}
+
+/**
+ * Produce a random number. This function can be slow, so it's best to seed a generator if lots of random data is needed.
+ *
+ * @returns `Ok(num)` of a random number if successful or `Err(exception)` otherwise
+ */
+@unsafe
+provide let random = () => {
+  let buf = Memory.malloc(4n)
+
+  let err = Wasi.random_get(buf, 4n)
+  if (err != Wasi._ESUCCESS) {
+    Memory.free(buf)
+    return Err(Wasi.SystemError(tagSimpleNumber(err)))
+  }
+  let rand = WasmI32.load(buf, 0n)
+  Memory.free(buf)
+  return Ok(tagSimpleNumber(rand))
+}

@@ -11,11 +11,12 @@ type mapper = {
   constructor: (mapper, constructor_declaration) => constructor_declaration,
   label: (mapper, label_declaration) => label_declaration,
   location: (mapper, Location.t) => Location.t,
-  import: (mapper, import_declaration) => import_declaration,
-  export: (mapper, list(export_declaration)) => list(export_declaration),
-  export_all: (mapper, list(export_except)) => list(export_except),
+  include_: (mapper, include_declaration) => include_declaration,
+  provide: (mapper, list(provide_item)) => list(provide_item),
   value_binding: (mapper, value_binding) => value_binding,
   match_branch: (mapper, match_branch) => match_branch,
+  primitive_description:
+    (mapper, primitive_description) => primitive_description,
   value_description: (mapper, value_description) => value_description,
   grain_exception: (mapper, type_exception) => type_exception,
   toplevel: (mapper, toplevel_stmt) => toplevel_stmt,
@@ -23,124 +24,324 @@ type mapper = {
 
 let map_loc = (sub, {loc, txt}) => {loc: sub.location(sub, loc), txt};
 let map_opt = (sub, loc_opt) => Option.map(map_loc(sub), loc_opt);
+let map_identifier = (sub, {loc, txt}) => {
+  open Identifier;
+  let rec map_ident = id =>
+    switch (id) {
+    | IdentName(n) => IdentName(map_loc(sub, n))
+    | IdentExternal(mod_, n) =>
+      IdentExternal(map_ident(mod_), map_loc(sub, n))
+    };
+  {loc: sub.location(sub, loc), txt: map_ident(txt)};
+};
+let map_record_fields = (sub, es) => {
+  List.map(
+    ((name, expr)) => (map_loc(sub, name), sub.expr(sub, expr)),
+    es,
+  );
+};
 
 module Cnst = {
   let map = (sub, c) => c;
 };
 
 module E = {
-  let map = (sub, {pexp_desc: desc, pexp_attributes: attrs, pexp_loc: loc}) => {
-    open Exp;
+  let map =
+      (
+        sub,
+        {
+          pexp_desc: desc,
+          pexp_attributes: attrs,
+          pexp_loc: loc,
+          pexp_core_loc: core_loc,
+        },
+      ) => {
+    open Expression;
     let loc = sub.location(sub, loc);
+    let core_loc = sub.location(sub, core_loc);
     let attributes =
       List.map(
-        ((attr, args)) =>
-          (map_loc(sub, attr), List.map(map_loc(sub), args)),
+        ({Asttypes.attr_name, attr_args, attr_loc}) =>
+          {
+            Asttypes.attr_name: map_loc(sub, attr_name),
+            attr_args: List.map(map_loc(sub), attr_args),
+            attr_loc: sub.location(sub, attr_loc),
+          },
         attrs,
       );
     switch (desc) {
-    | PExpId(i) => ident(~loc, ~attributes, map_loc(sub, i))
-    | PExpConstant(c) => constant(~loc, ~attributes, sub.constant(sub, c))
-    | PExpTuple(es) => tuple(~loc, ~attributes, List.map(sub.expr(sub), es))
-    | PExpArray(es) => array(~loc, ~attributes, List.map(sub.expr(sub), es))
-    | PExpArrayGet(a, i) =>
-      array_get(~loc, ~attributes, sub.expr(sub, a), sub.expr(sub, i))
-    | PExpArraySet(a, i, arg) =>
-      array_set(
+    | PExpId(i) =>
+      ident(~loc, ~core_loc, ~attributes, map_identifier(sub, i))
+    | PExpConstant(c) =>
+      constant(~loc, ~core_loc, ~attributes, sub.constant(sub, c))
+    | PExpTuple(es) =>
+      tuple(~loc, ~core_loc, ~attributes, List.map(sub.expr(sub), es))
+    | PExpList(es) =>
+      list(
         ~loc,
-        ~attributes,
-        sub.expr(sub, a),
-        sub.expr(sub, i),
-        sub.expr(sub, arg),
-      )
-    | PExpRecord(es) =>
-      record(
-        ~loc,
+        ~core_loc,
         ~attributes,
         List.map(
-          ((name, expr)) => (map_loc(sub, name), sub.expr(sub, expr)),
+          item => {
+            switch (item) {
+            | ListItem(e) => ListItem(sub.expr(sub, e))
+            | ListSpread(e, loc) =>
+              ListSpread(sub.expr(sub, e), sub.location(sub, loc))
+            }
+          },
           es,
         ),
       )
+    | PExpArray(es) =>
+      array(~loc, ~core_loc, ~attributes, List.map(sub.expr(sub), es))
+    | PExpArrayGet(a, i) =>
+      array_get(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, a),
+        sub.expr(sub, i),
+      )
+    | PExpArraySet({lhs_loc, array, index, value, infix_op}) =>
+      array_set(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        ~infix_op=?Option.map(sub.expr(sub), infix_op),
+        ~lhs_loc=sub.location(sub, lhs_loc),
+        sub.expr(sub, array),
+        sub.expr(sub, index),
+        sub.expr(sub, value),
+      )
+    | PExpRecord(b, es) =>
+      record(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        Option.map(sub.expr(sub), b),
+        map_record_fields(sub, es),
+      )
     | PExpRecordGet(e, f) =>
-      record_get(~loc, ~attributes, sub.expr(sub, e), map_loc(sub, f))
+      record_get(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, e),
+        map_loc(sub, f),
+      )
     | PExpRecordSet(e, f, v) =>
       record_set(
         ~loc,
+        ~core_loc,
         ~attributes,
         sub.expr(sub, e),
         map_loc(sub, f),
         sub.expr(sub, v),
       )
     | PExpLet(r, m, vbs) =>
-      let_(~loc, ~attributes, r, m, List.map(sub.value_binding(sub), vbs))
+      let_(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        r,
+        m,
+        List.map(sub.value_binding(sub), vbs),
+      )
     | PExpMatch(e, mbs) =>
       match(
         ~loc,
+        ~core_loc,
         ~attributes,
         sub.expr(sub, e),
-        List.map(sub.match_branch(sub), mbs),
+        {
+          txt: List.map(sub.match_branch(sub), mbs.txt),
+          loc: sub.location(sub, mbs.loc),
+        },
       )
-    | PExpPrim1(p1, e) => prim1(~loc, ~attributes, p1, sub.expr(sub, e))
+    | PExpPrim0(p0) => prim0(~loc, ~core_loc, ~attributes, p0)
+    | PExpPrim1(p1, e) =>
+      prim1(~loc, ~core_loc, ~attributes, p1, sub.expr(sub, e))
     | PExpPrim2(p2, e1, e2) =>
-      prim2(~loc, ~attributes, p2, sub.expr(sub, e1), sub.expr(sub, e2))
+      prim2(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        p2,
+        sub.expr(sub, e1),
+        sub.expr(sub, e2),
+      )
     | PExpPrimN(p, es) =>
-      primn(~loc, ~attributes, p, List.map(sub.expr(sub), es))
+      primn(~loc, ~core_loc, ~attributes, p, List.map(sub.expr(sub), es))
     | PExpBoxAssign(e1, e2) =>
-      box_assign(~loc, ~attributes, sub.expr(sub, e1), sub.expr(sub, e2))
+      box_assign(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, e1),
+        sub.expr(sub, e2),
+      )
     | PExpAssign(e1, e2) =>
-      assign(~loc, ~attributes, sub.expr(sub, e1), sub.expr(sub, e2))
+      assign(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, e1),
+        sub.expr(sub, e2),
+      )
     | PExpIf(c, t, f) =>
       if_(
         ~loc,
+        ~core_loc,
         ~attributes,
         sub.expr(sub, c),
         sub.expr(sub, t),
-        sub.expr(sub, f),
+        Option.map(sub.expr(sub), f),
       )
     | PExpWhile(c, e) =>
-      while_(~loc, ~attributes, sub.expr(sub, c), sub.expr(sub, e))
+      while_(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, c),
+        sub.expr(sub, e),
+      )
     | PExpFor(i, c, inc, e) =>
       for_(
         ~loc,
+        ~core_loc,
         ~attributes,
         Option.map(sub.expr(sub), i),
         Option.map(sub.expr(sub), c),
         Option.map(sub.expr(sub), inc),
         sub.expr(sub, e),
       )
-    | PExpContinue => continue(~loc, ~attributes, ())
-    | PExpBreak => break(~loc, ~attributes, ())
+    | PExpContinue => continue(~loc, ~core_loc, ~attributes, ())
+    | PExpBreak => break(~loc, ~core_loc, ~attributes, ())
+    | PExpReturn(e) =>
+      return(~loc, ~core_loc, ~attributes, Option.map(sub.expr(sub), e))
     | PExpLambda(pl, e) =>
       lambda(
         ~loc,
+        ~core_loc,
         ~attributes,
-        List.map(sub.pat(sub), pl),
+        List.map(
+          arg =>
+            {
+              pla_label: arg.pla_label,
+              pla_pattern: sub.pat(sub, arg.pla_pattern),
+              pla_default: Option.map(sub.expr(sub), arg.pla_default),
+              pla_loc: sub.location(sub, arg.pla_loc),
+            },
+          pl,
+        ),
         sub.expr(sub, e),
       )
     | PExpApp(e, el) =>
       apply(
         ~loc,
+        ~core_loc,
         ~attributes,
         sub.expr(sub, e),
-        List.map(sub.expr(sub), el),
+        List.map(
+          arg =>
+            {
+              paa_label: arg.paa_label,
+              paa_expr: sub.expr(sub, arg.paa_expr),
+              paa_loc: sub.location(sub, arg.paa_loc),
+            },
+          el,
+        ),
       )
-    | PExpBlock(el) => block(~loc, ~attributes, List.map(sub.expr(sub), el))
-    | PExpNull => null(~loc, ~attributes, ())
+    | PExpConstruct(id, e) =>
+      construct(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        map_identifier(sub, id),
+        switch (e) {
+        | PExpConstrSingleton => PExpConstrSingleton
+        | PExpConstrTuple(el) =>
+          PExpConstrTuple(List.map(sub.expr(sub), el))
+        | PExpConstrRecord(es) =>
+          PExpConstrRecord(map_record_fields(sub, es))
+        },
+      )
+    | PExpBlock(el) =>
+      block(~loc, ~core_loc, ~attributes, List.map(sub.expr(sub), el))
     | PExpConstraint(e, t) =>
-      constraint_(~loc, ~attributes, sub.expr(sub, e), sub.typ(sub, t))
+      constraint_(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        sub.expr(sub, e),
+        sub.typ(sub, t),
+      )
+    | PExpUse(id, u) =>
+      let u =
+        switch (u) {
+        | PUseItems(items) =>
+          PUseItems(
+            List.map(
+              item => {
+                switch (item) {
+                | PUseType({name, alias, loc}) =>
+                  PUseType({
+                    name: map_identifier(sub, name),
+                    alias: Option.map(map_identifier(sub), alias),
+                    loc: sub.location(sub, loc),
+                  })
+                | PUseException({name, alias, loc}) =>
+                  PUseException({
+                    name: map_identifier(sub, name),
+                    alias: Option.map(map_identifier(sub), alias),
+                    loc: sub.location(sub, loc),
+                  })
+                | PUseModule({name, alias, loc}) =>
+                  PUseModule({
+                    name: map_identifier(sub, name),
+                    alias: Option.map(map_identifier(sub), alias),
+                    loc: sub.location(sub, loc),
+                  })
+                | PUseValue({name, alias, loc}) =>
+                  PUseValue({
+                    name: map_identifier(sub, name),
+                    alias: Option.map(map_identifier(sub), alias),
+                    loc: sub.location(sub, loc),
+                  })
+                }
+              },
+              items,
+            ),
+          )
+        | PUseAll => PUseAll
+        };
+      use(~loc, ~core_loc, ~attributes, map_identifier(sub, id), u);
     };
   };
 };
 
 module P = {
   let map = (sub, {ppat_desc: desc, ppat_loc: loc}) => {
-    open Pat;
+    open Pattern;
     let loc = sub.location(sub, loc);
     switch (desc) {
     | PPatAny => any(~loc, ())
     | PPatVar(sl) => var(~loc, map_loc(sub, sl))
     | PPatTuple(pl) => tuple(~loc, List.map(sub.pat(sub), pl))
+    | PPatList(pl) =>
+      list(
+        ~loc,
+        List.map(
+          item => {
+            switch (item) {
+            | ListItem(p) => ListItem(sub.pat(sub, p))
+            | ListSpread(p, loc) =>
+              ListSpread(sub.pat(sub, p), sub.location(sub, loc))
+            }
+          },
+          pl,
+        ),
+      )
     | PPatArray(pl) => array(~loc, List.map(sub.pat(sub), pl))
     | PPatRecord(fs, c) =>
       record(
@@ -154,8 +355,23 @@ module P = {
     | PPatConstant(c) => constant(~loc, sub.constant(sub, c))
     | PPatConstraint(p, pt) =>
       constraint_(~loc, sub.pat(sub, p), sub.typ(sub, pt))
-    | PPatConstruct(id, pl) =>
-      construct(~loc, map_loc(sub, id), List.map(sub.pat(sub), pl))
+    | PPatConstruct(id, p) =>
+      construct(
+        ~loc,
+        map_identifier(sub, id),
+        switch (p) {
+        | PPatConstrTuple(pl) => PPatConstrTuple(List.map(sub.pat(sub), pl))
+        | PPatConstrRecord(fs, c) =>
+          PPatConstrRecord(
+            List.map(
+              ((id, pat)) => (map_loc(sub, id), sub.pat(sub, pat)),
+              fs,
+            ),
+            c,
+          )
+        | PPatConstrSingleton => PPatConstrSingleton
+        },
+      )
     | PPatOr(p1, p2) => or_(~loc, sub.pat(sub, p1), sub.pat(sub, p2))
     | PPatAlias(p, id) => alias(~loc, sub.pat(sub, p), map_loc(sub, id))
     };
@@ -164,11 +380,28 @@ module P = {
 
 module C = {
   let map = (sub, {pcd_name: name, pcd_args: args, pcd_loc: loc}) => {
-    open CDecl;
+    open ConstructorDeclaration;
     let loc = sub.location(sub, loc);
     let sname = map_loc(sub, name);
     switch (args) {
-    | PConstrTuple(ptl) => tuple(~loc, sname, List.map(sub.typ(sub), ptl))
+    | PConstrTuple(ptl) =>
+      tuple(
+        ~loc,
+        sname,
+        {
+          txt: List.map(sub.typ(sub), ptl.txt),
+          loc: sub.location(sub, ptl.loc),
+        },
+      )
+    | PConstrRecord(ldl) =>
+      record(
+        ~loc,
+        sname,
+        {
+          txt: List.map(sub.label(sub), ldl.txt),
+          loc: sub.location(sub, ldl.loc),
+        },
+      )
     | PConstrSingleton => singleton(~loc, sname)
     };
   };
@@ -177,7 +410,7 @@ module C = {
 module L = {
   let map =
       (sub, {pld_name: name, pld_type: typ, pld_mutable: mut, pld_loc: loc}) => {
-    open LDecl;
+    open LabelDeclaration;
     let loc = sub.location(sub, loc);
     let sname = map_loc(sub, name);
     mk(~loc, sname, sub.typ(sub, typ), mut);
@@ -189,6 +422,7 @@ module D = {
       (
         sub,
         {
+          pdata_rec: rec_flag,
           pdata_name: name,
           pdata_params: args,
           pdata_kind: kind,
@@ -196,24 +430,30 @@ module D = {
           pdata_loc: loc,
         },
       ) => {
-    open Dat;
+    open DataDeclaration;
     let loc = sub.location(sub, loc);
     let sname = map_loc(sub, name);
     let sargs = List.map(sub.typ(sub), args);
     let sman = Option.map(sub.typ(sub), man);
     switch (kind) {
-    | PDataAbstract => abstract(~loc, sname, sargs, sman)
+    | PDataAbstract => abstract(~loc, ~rec_flag, sname, sargs, sman)
     | PDataVariant(cdl) =>
-      variant(~loc, sname, sargs, List.map(sub.constructor(sub), cdl))
+      variant(
+        ~loc,
+        ~rec_flag,
+        sname,
+        sargs,
+        List.map(sub.constructor(sub), cdl),
+      )
     | PDataRecord(ldl) =>
-      record(~loc, sname, sargs, List.map(sub.label(sub), ldl))
+      record(~loc, ~rec_flag, sname, sargs, List.map(sub.label(sub), ldl))
     };
   };
 };
 
 module Exc = {
   let map = (sub, {ptyexn_constructor: ext, ptyexn_loc: loc}) => {
-    open Except;
+    open Exception;
     let cloc = sub.location(sub, loc);
     let {pext_name: n, pext_kind: k, pext_loc: loc} = ext;
     let name = map_loc(sub, n);
@@ -223,7 +463,16 @@ module Exc = {
       | PExtDecl(args) =>
         PExtDecl(
           switch (args) {
-          | PConstrTuple(ptl) => PConstrTuple(List.map(sub.typ(sub), ptl))
+          | PConstrTuple(ptl) =>
+            PConstrTuple({
+              txt: List.map(sub.typ(sub), ptl.txt),
+              loc: sub.location(sub, ptl.loc),
+            })
+          | PConstrRecord(ldl) =>
+            PConstrRecord({
+              txt: List.map(sub.label(sub), ldl.txt),
+              loc: sub.location(sub, ldl.loc),
+            })
           | PConstrSingleton => PConstrSingleton
           },
         )
@@ -236,16 +485,28 @@ module Exc = {
 
 module T = {
   let map = (sub, {ptyp_desc: desc, ptyp_loc: loc}) => {
-    open Typ;
+    open Type;
     let loc = sub.location(sub, loc);
     switch (desc) {
     | PTyAny => any(~loc, ())
     | PTyVar(v) => var(~loc, v)
     | PTyArrow(args, ret) =>
-      arrow(~loc, List.map(sub.typ(sub), args), sub.typ(sub, ret))
+      arrow(
+        ~loc,
+        List.map(
+          arg =>
+            {
+              ptyp_arg_label: arg.ptyp_arg_label,
+              ptyp_arg_type: sub.typ(sub, arg.ptyp_arg_type),
+              ptyp_arg_loc: sub.location(sub, arg.ptyp_arg_loc),
+            },
+          args,
+        ),
+        sub.typ(sub, ret),
+      )
     | PTyTuple(ts) => tuple(~loc, List.map(sub.typ(sub), ts))
     | PTyConstr(name, ts) =>
-      constr(~loc, map_loc(sub, name), List.map(sub.typ(sub), ts))
+      constr(~loc, map_identifier(sub, name), List.map(sub.typ(sub), ts))
     | PTyPoly(vars, t) =>
       poly(~loc, List.map(map_loc(sub), vars), sub.typ(sub, t))
     };
@@ -271,61 +532,59 @@ module MB = {
 };
 
 module I = {
-  let map_shape = (sub, ival) => {
-    Imp.(
-      switch (ival) {
-      | PImportValues(values) =>
-        PImportValues(
-          List.map(
-            ((name, alias)) => (map_loc(sub, name), map_opt(sub, alias)),
-            values,
-          ),
-        )
-      | PImportAllExcept(values) =>
-        PImportAllExcept(List.map(map_loc(sub), values))
-      | PImportModule(id) => PImportModule(map_loc(sub, id))
-      }
-    );
-  };
-  let map = (sub, {pimp_val, pimp_path, pimp_loc}) => {
+  let map = (sub, {pinc_module, pinc_alias, pinc_path, pinc_loc}) => {
     {
-      pimp_path: map_loc(sub, pimp_path),
-      pimp_val: List.map(map_shape(sub), pimp_val),
-      pimp_loc: sub.location(sub, pimp_loc),
+      pinc_path: map_loc(sub, pinc_path),
+      pinc_module: map_loc(sub, pinc_module),
+      pinc_alias: Option.map(map_loc(sub), pinc_alias),
+      pinc_loc: sub.location(sub, pinc_loc),
     };
   };
 };
 
-module Ex = {
-  let map = (sub, exports) => {
-    let process_desc = ({pex_name, pex_alias, pex_loc}) => {
-      let pex_name = map_loc(sub, pex_name);
-      let pex_alias =
-        switch (pex_alias) {
-        | Some(alias) => Some(map_loc(sub, alias))
-        | None => None
-        };
-      let pex_loc = sub.location(sub, pex_loc);
-      {pex_name, pex_alias, pex_loc};
-    };
+module Pr = {
+  let map = (sub, items) => {
     List.map(
-      export =>
-        switch (export) {
-        | ExportData(desc) => ExportData(process_desc(desc))
-        | ExportValue(desc) => ExportValue(process_desc(desc))
-        },
-      exports,
+      item => {
+        switch (item) {
+        | PProvideType({name, alias, loc}) =>
+          PProvideType({
+            name: map_identifier(sub, name),
+            alias: Option.map(map_identifier(sub), alias),
+            loc: sub.location(sub, loc),
+          })
+        | PProvideException({name, alias, loc}) =>
+          PProvideException({
+            name: map_identifier(sub, name),
+            alias: Option.map(map_identifier(sub), alias),
+            loc: sub.location(sub, loc),
+          })
+        | PProvideModule({name, alias, loc}) =>
+          PProvideModule({
+            name: map_identifier(sub, name),
+            alias: Option.map(map_identifier(sub), alias),
+            loc: sub.location(sub, loc),
+          })
+        | PProvideValue({name, alias, loc}) =>
+          PProvideValue({
+            name: map_identifier(sub, name),
+            alias: Option.map(map_identifier(sub), alias),
+            loc: sub.location(sub, loc),
+          })
+        }
+      },
+      items,
     );
   };
-  let map_export_all = (sub, excepts) =>
-    List.map(
-      except =>
-        switch (except) {
-        | ExportExceptData(name) => ExportExceptData(map_loc(sub, name))
-        | ExportExceptValue(name) => ExportExceptValue(map_loc(sub, name))
-        },
-      excepts,
-    );
+};
+
+module PD = {
+  let map = (sub, {pprim_ident: ident, pprim_name: name, pprim_loc: loc}) => {
+    let pprim_loc = sub.location(sub, loc);
+    let pprim_ident = map_loc(sub, ident);
+    let pprim_name = map_loc(sub, name);
+    {pprim_ident, pprim_name, pprim_loc};
+  };
 };
 
 module VD = {
@@ -338,43 +597,93 @@ module VD = {
 };
 
 module TL = {
-  let map = (sub, {ptop_desc: desc, ptop_attributes: attrs, ptop_loc: loc}) => {
-    open Top;
+  let map =
+      (
+        sub,
+        {
+          ptop_desc: desc,
+          ptop_attributes: attrs,
+          ptop_loc: loc,
+          ptop_core_loc: core_loc,
+        },
+      ) => {
+    open Toplevel;
     let loc = sub.location(sub, loc);
+    let core_loc = sub.location(sub, core_loc);
     let attributes =
       List.map(
-        ((attr, args)) =>
-          (map_loc(sub, attr), List.map(map_loc(sub), args)),
+        ({Asttypes.attr_name, attr_args, attr_loc}) =>
+          {
+            Asttypes.attr_name: map_loc(sub, attr_name),
+            attr_args: List.map(map_loc(sub), attr_args),
+            attr_loc: sub.location(sub, attr_loc),
+          },
         attrs,
       );
     switch (desc) {
-    | PTopImport(decls) =>
-      Top.import(~loc, ~attributes, sub.import(sub, decls))
-    | PTopForeign(e, d) =>
-      Top.foreign(~loc, ~attributes, e, sub.value_description(sub, d))
-    | PTopPrimitive(e, d) =>
-      Top.primitive(~loc, ~attributes, e, sub.value_description(sub, d))
-    | PTopData(dd) =>
-      Top.data(
+    | PTopInclude(decls) =>
+      Toplevel.include_(
         ~loc,
+        ~core_loc,
         ~attributes,
-        List.map(((e, d)) => (e, sub.data(sub, d)), dd),
+        sub.include_(sub, decls),
+      )
+    | PTopForeign(e, d) =>
+      Toplevel.foreign(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        e,
+        sub.value_description(sub, d),
+      )
+    | PTopPrimitive(e, d) =>
+      Toplevel.primitive(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        e,
+        sub.primitive_description(sub, d),
+      )
+    | PTopData(dd) =>
+      Toplevel.data(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        List.map(
+          ((e, d, l)) => (e, sub.data(sub, d), sub.location(sub, l)),
+          dd,
+        ),
       )
     | PTopLet(e, r, m, vb) =>
-      Top.let_(
+      Toplevel.let_(
         ~loc,
+        ~core_loc,
         ~attributes,
         e,
         r,
         m,
         List.map(sub.value_binding(sub), vb),
       )
-    | PTopExpr(e) => Top.expr(~loc, ~attributes, sub.expr(sub, e))
+    | PTopModule(e, d) =>
+      Toplevel.module_(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        e,
+        {...d, pmod_stmts: List.map(sub.toplevel(sub), d.pmod_stmts)},
+      )
+    | PTopExpr(e) =>
+      Toplevel.expr(~loc, ~core_loc, ~attributes, sub.expr(sub, e))
     | PTopException(e, d) =>
-      Top.grain_exception(~loc, ~attributes, e, sub.grain_exception(sub, d))
-    | PTopExport(ex) => Top.export(~loc, ~attributes, sub.export(sub, ex))
-    | PTopExportAll(ex) =>
-      Top.export_all(~loc, ~attributes, sub.export_all(sub, ex))
+      Toplevel.grain_exception(
+        ~loc,
+        ~core_loc,
+        ~attributes,
+        e,
+        sub.grain_exception(sub, d),
+      )
+    | PTopProvide(ex) =>
+      Toplevel.provide(~loc, ~core_loc, ~attributes, sub.provide(sub, ex))
     };
   };
 };
@@ -388,11 +697,11 @@ let default_mapper = {
   constructor: C.map,
   label: L.map,
   location: (_, x) => x,
-  import: I.map,
-  export: Ex.map,
-  export_all: Ex.map_export_all,
+  include_: I.map,
+  provide: Pr.map,
   value_binding: V.map,
   match_branch: MB.map,
+  primitive_description: PD.map,
   value_description: VD.map,
   grain_exception: Exc.map,
   toplevel: TL.map,

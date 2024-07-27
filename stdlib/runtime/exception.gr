@@ -1,25 +1,26 @@
-/* grainc-flags --compilation-mode=runtime */
+@runtimeMode
+module Exception
 
-import WasmI32, {
-  eq as (==),
-  add as (+)
-} from "runtime/unsafe/wasmi32"
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{ (==), (+), (-) }
 
-import foreign wasm fd_write: (WasmI32, WasmI32, WasmI32, WasmI32) -> WasmI32 from "wasi_snapshot_preview1"
+foreign wasm fd_write:
+  (WasmI32, WasmI32, WasmI32, WasmI32) => WasmI32 from "wasi_snapshot_preview1"
 
-enum Option<a> { Some(a), None }
+primitive unreachable = "@unreachable"
 
-export let mut printers = 0n
+provide let mut printers = 0n
 
 // These functions are dangerous because they leak runtime memory and perform
 // no GC operations. As such, they should only be called by this module and/or
 // modules that understand these restrictions, namely Pervasives.
 
-export let dangerouslyRegisterBasePrinter = (f) => {
+provide let dangerouslyRegisterBasePrinter = f => {
   let mut current = printers
   while (true) {
     // There will be at least one printer registered by the time this is called
-    let (_, next) = WasmI32.toGrain(current) : (Exception -> Option<String>, WasmI32)
+    let (_, next) = WasmI32.toGrain(current):
+      (Exception => Option<String>, WasmI32)
     if (next == 0n) {
       // Using a tuple in runtime mode is typically disallowed as there is no way
       // to reclaim the memory, but this function is only called once
@@ -34,11 +35,18 @@ export let dangerouslyRegisterBasePrinter = (f) => {
   void
 }
 
-export let dangerouslyRegisterPrinter = (f) => {
+provide let dangerouslyRegisterPrinter = f => {
   printers = WasmI32.fromGrain((f, printers))
   // We don't decRef the closure or arguments here to avoid a cyclic dep. on Memory.
   // This is fine, as this function is only called seldomly.
   void
+}
+
+// avoid cirular dependency on gc
+let incRef = v => {
+  let ptr = WasmI32.fromGrain(v) - 8n
+  WasmI32.store(ptr, WasmI32.load(ptr, 0n) + 1n, 0n)
+  v
 }
 
 let _GENERIC_EXCEPTION_NAME = "GrainException"
@@ -47,20 +55,18 @@ let exceptionToString = (e: Exception) => {
   let mut result = _GENERIC_EXCEPTION_NAME
   let mut current = printers
   while (true) {
-    if (current == 0n) {
-      break
-    }
-    let (printer, next) = WasmI32.toGrain(current) : (Exception -> Option<String>, WasmI32)
-    match (printer(e)) {
-      Some(str) => {
-        result = str
-        break
+    if (current == 0n) return result
+    let (printer, next) = WasmI32.toGrain(current):
+      (Exception => Option<String>, WasmI32)
+    // as GC is not available, manually increment the references
+    match (incRef(printer)(incRef(e))) {
+      Some(str) => return str,
+      None => {
+        current = next
       },
-      None => void
     }
-    current = next
   }
-  result
+  return result
 }
 
 // HACK: Allocate static buffer for printing (40 bytes)
@@ -68,8 +74,8 @@ let exceptionToString = (e: Exception) => {
 // the runtime heap, but this is the only module that needs to do it
 let iov = WasmI32.fromGrain([> 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n])
 
-export let printException = (e: Exception) => {
-  let ptr = WasmI32.fromGrain(exceptionToString(e))
+provide let panic = (msg: String) => {
+  let ptr = WasmI32.fromGrain(msg)
   let written = iov + 32n
   let lf = iov + 36n
   WasmI32.store(iov, ptr + 8n, 0n)
@@ -78,16 +84,19 @@ export let printException = (e: Exception) => {
   WasmI32.store(iov, lf, 8n)
   WasmI32.store(iov, 1n, 12n)
   fd_write(2n, iov, 2n, written)
-  void
+  unreachable()
 }
 
-export exception IndexOutOfBounds
-export exception DivisionByZero
-export exception ModuloByZero
-export exception Overflow
-export exception NumberNotIntlike
-export exception NumberNotRational
-export exception MatchFailure
+provide let panicWithException = (e: Exception) => {
+  panic(exceptionToString(e))
+}
+
+provide exception DivisionByZero
+provide exception ModuloByZero
+provide exception Overflow
+provide exception NumberNotIntlike
+provide exception NumberNotRational
+provide exception MatchFailure
 /*
  * `assert <condition>` is essentially syntactic sugar for:
  * `if (!<condition>) throw AssertionError(<message>)`
@@ -96,23 +105,24 @@ export exception MatchFailure
  * this file to construct the error, but constructing a string in this module is impractical as we
  * don't have access to memory allocation since malloc.gr depends on this module.
  */
-export exception AssertionError(String)
-export exception InvalidArgument(String)
-export exception OutOfMemory
 
-let runtimeErrorPrinter = (e) => {
+provide exception InvalidArgument(String)
+
+let runtimeErrorPrinter = e => {
   match (e) {
     IndexOutOfBounds => Some("IndexOutOfBounds: Index out of bounds"),
+    IndexNonInteger => Some("IndexNonInteger: Index not an integer"),
     DivisionByZero => Some("DivisionByZero: Division by zero"),
     ModuloByZero => Some("ModuloByZero: Modulo by zero"),
     Overflow => Some("Overflow: Number overflow"),
-    NumberNotIntlike => Some("NumberNotIntlike: Can't coerce number to integer"),
-    NumberNotRational => Some("NumberNotRational: Can't coerce number to rational"),
+    NumberNotIntlike =>
+      Some("NumberNotIntlike: Can't coerce number to integer"),
+    NumberNotRational =>
+      Some("NumberNotRational: Can't coerce number to rational"),
     MatchFailure => Some("MatchFailure: No matching pattern"),
     AssertionError(s) => Some(s),
-    OutOfMemory => Some("OutOfMemory: Maximum memory size exceeded"),
     InvalidArgument(msg) => Some(msg),
-    _ => None
+    _ => None,
   }
 }
 

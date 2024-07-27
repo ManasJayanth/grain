@@ -1,11 +1,15 @@
-type optimization_level =
-  | Level_zero
-  | Level_one
-  | Level_two
-  | Level_three;
+type profile =
+  | Release;
+
+type compilation_mode =
+  | Normal /* Standard compilation with regular bells and whistles */
+  | Runtime /* GC doesn't exist yet, allocations happen in runtime heap */;
 
 /** The Grain stdlib directory, based on the current configuration */
 let stdlib_directory: unit => option(string);
+
+/** The WASI polyfill path, based on the current configuration */
+let wasi_polyfill_path: unit => option(string);
 
 /** The list of directories to search for modules in, based on the current configuration */
 
@@ -40,9 +44,19 @@ let wasi_polyfill: ref(option(string));
 
 let use_start_section: ref(bool);
 
-/** Whether optimizations should be run */
+/** Compilation profile, e.g. release for production builds */
 
-let optimization_level: ref(optimization_level);
+let profile: ref(option(profile));
+
+// [NOTE] This default is here because it is used in multiple locations,
+//        and it doesn't make sense for it to be "owned" by any of them.
+/** The default value for `memory_base` */
+
+let default_memory_base: int;
+
+/** Start address of Grain runtime heap */
+
+let memory_base: ref(option(int));
 
 /** The path to find modules on */
 
@@ -52,17 +66,9 @@ let include_dirs: ref(list(string));
 
 let stdlib_dir: ref(option(string));
 
-/** The base path where all Grain files for the program reside */
-
-let base_path: ref(string);
-
 /** Whether color output should be enabled */
 
 let color_enabled: ref(bool);
-
-/** Whether to use principal types when compiling */
-
-let principal: ref(bool);
 
 /** Initial number of WebAssembly memory pages */
 
@@ -72,29 +78,25 @@ let initial_memory_pages: ref(int);
 
 let maximum_memory_pages: ref(option(int));
 
-/** Compilation mode to use when compiling */
+/** Import the memory from `env.memory` */
 
-let compilation_mode: ref(option(string));
+let import_memory: ref(bool);
+
+/** Whether this module should be compiled in runtime mode */
+
+let compilation_mode: ref(compilation_mode);
 
 /** Statically link modules after compilation */
 
 let statically_link: ref(bool);
 
-/** Enable tail-call optimizations */
+/** Disables tail-call optimizations */
 
-let experimental_tail_call: ref(bool);
-
-/** Whether to allow cyclic types. */
-
-let recursive_types: ref(bool);
+let no_tail_call: ref(bool);
 
 /** Whether non-terminal block expressions should be forced to return void */
 
 let strict_sequence: ref(bool);
-
-/** The debugging level to use for the parser. Primarily intended for Grain compiler developers. */
-
-let parser_debug_level: ref(int);
 
 /** Whether debugging information should be included in the compiled output. */
 
@@ -118,10 +120,6 @@ let source_map: ref(bool);
 
 let safe_string: ref(bool);
 
-/** Just output errors and warnings for LSP mode. */
-
-let lsp_mode: ref(bool);
-
 /** Internal option to disable printing of warnings. */
 
 let print_warnings: ref(bool);
@@ -130,10 +128,10 @@ let print_warnings: ref(bool);
 
 /** Type representing a saved set of configuration options */
 
-type saved_config_opt =
-  | SavedOpt((ref('a), 'a)): saved_config_opt;
+type config;
 
-type config = list(saved_config_opt);
+/** An empty config */
+let empty: config;
 
 /** The current configuration for all programs */
 
@@ -180,17 +178,12 @@ let preserve_all_configs: (unit => 'a) => 'a;
 
 let with_cli_options: 'a => Cmdliner.Term.t('a);
 
-/** Runs the given thunk with the given base_path value */
-let with_base_path: (string, unit => 'a) => 'a;
+/** Applies compile flags provided as module attributes */
 
-/** Applies compile flags provided at the start of a file */
+let apply_attribute_flags: (~no_pervasives: bool, ~runtime_mode: bool) => unit;
 
-let apply_inline_flags:
-  (~on_error: [> | `Help | `Message(string)] => unit, string) => unit;
-
-let with_inline_flags:
-  (~on_error: [> | `Help | `Message(string)] => unit, string, unit => 'a) =>
-  'a;
+let with_attribute_flags:
+  (~no_pervasives: bool, ~runtime_mode: bool, unit => 'a) => 'a;
 
 type implicit_opens =
   | Pervasives_mod

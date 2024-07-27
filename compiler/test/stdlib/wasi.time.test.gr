@@ -1,0 +1,46 @@
+module TimeTest
+
+from "int64" include Int64
+use Int64.{ (<), (<=) }
+from "wasi/time" include Time
+
+let mt1 = Time.monotonicTime()
+let mt2 = Time.monotonicTime()
+
+// Just a smoke test, there's a chance this could fail
+match ((mt1, mt2)) {
+  (Ok(x), Ok(y)) => assert x < y,
+  (Err(err), _) => throw err,
+  (_, Err(err)) => throw err,
+}
+
+let pct1 = Time.processCpuTime()
+let pct2 = Time.processCpuTime()
+
+// Just a smoke test, there's a chance this could fail
+// This is using `<=` because time resolutions on Windows is not fine-grained enough
+match ((pct1, pct2)) {
+  (Ok(x), Ok(y)) => assert x <= y,
+  (Err(err), _) => throw err,
+  (_, Err(err)) => throw err,
+}
+
+let tct1 = Time.threadCpuTime()
+let tct2 = Time.threadCpuTime()
+
+// Just a smoke test, there's a chance this could fail
+// This is using `<=` because time resolutions on Windows is not fine-grained enough
+match ((tct1, tct2)) {
+  (Ok(x), Ok(y)) => assert x <= y,
+  (Err(err), _) => throw err,
+  (_, Err(err)) => throw err,
+}
+
+let epoch = 0L
+let rt = Time.realTime()
+
+// Just a smoke test, there's a chance this could fail if system dates are bad
+match (rt) {
+  Ok(now) => assert epoch < now,
+  Err(err) => throw err,
+}

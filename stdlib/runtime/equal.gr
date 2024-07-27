@@ -1,29 +1,24 @@
-/* grainc-flags --compilation-mode=runtime */
+@noPervasives
+module Equal
 
-import WasmI32, {
-  eq as (==),
-  ne as (!=),
-  and as (&),
-  xor as (^),
-  add as (+),
-  sub as (-),
-  mul as (*),
-  ltS as (<),
-  remS as (%),
-  shl as (<<)
-} from "runtime/unsafe/wasmi32"
-import WasmI64 from "runtime/unsafe/wasmi64"
-import Tags from "runtime/unsafe/tags"
-import Memory from "runtime/unsafe/memory"
+from "runtime/unsafe/memory" include Memory
+from "runtime/unsafe/wasmi32" include WasmI32
+use WasmI32.{ (==), (!=), (&), (^), (+), (-), (*), (<), remS as (%), (<<) }
+from "runtime/unsafe/wasmi64" include WasmI64
+from "runtime/unsafe/wasmf32" include WasmF32
+from "runtime/unsafe/tags" include Tags
+from "runtime/numbers" include Numbers
+use Numbers.{ isNumber, numberEqual }
 
-primitive (!) : Bool -> Bool = "@not"
-primitive (||) : (Bool, Bool) -> Bool = "@or"
-primitive (&&) : (Bool, Bool) -> Bool = "@and"
+primitive (!) = "@not"
+primitive (||) = "@or"
+primitive (&&) = "@and"
+primitive ignore = "@ignore"
 
-import { isNumber, numberEqual } from "runtime/numbers"
-
+@unsafe
 let cycleMarker = 0x80000000n
 
+@unsafe
 let rec heapEqualHelp = (heapTag, xptr, yptr) => {
   match (heapTag) {
     t when t == Tags._GRAIN_ADT_HEAP_TAG => {
@@ -45,7 +40,12 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
 
           let bytes = xarity * 4n
           for (let mut i = 0n; i < bytes; i += 4n) {
-            if (!equalHelp(WasmI32.load(xptr + i, 20n), WasmI32.load(yptr + i, 20n))) {
+            if (
+              !equalHelp(
+                WasmI32.load(xptr + i, 20n),
+                WasmI32.load(yptr + i, 20n)
+              )
+            ) {
               result = false
               break
             }
@@ -72,7 +72,9 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
 
         let bytes = xlength * 4n
         for (let mut i = 0n; i < bytes; i += 4n) {
-          if (!equalHelp(WasmI32.load(xptr + i, 16n), WasmI32.load(yptr + i, 16n))) {
+          if (
+            !equalHelp(WasmI32.load(xptr + i, 16n), WasmI32.load(yptr + i, 16n))
+          ) {
             result = false
             break
           }
@@ -91,7 +93,7 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
       if (xlength != ylength) {
         false
       } else if ((xlength & cycleMarker) == cycleMarker) {
-      // Cycle check
+        // Cycle check
         true
       } else {
         WasmI32.store(xptr, xlength ^ cycleMarker, 4n)
@@ -100,7 +102,9 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
         let mut result = true
         let bytes = xlength * 4n
         for (let mut i = 0n; i < bytes; i += 4n) {
-          if (!equalHelp(WasmI32.load(xptr + i, 8n), WasmI32.load(yptr + i, 8n))) {
+          if (
+            !equalHelp(WasmI32.load(xptr + i, 8n), WasmI32.load(yptr + i, 8n))
+          ) {
             result = false
             break
           }
@@ -120,42 +124,8 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
       if (xlength != ylength) {
         false
       } else {
-        let extra = xlength % 8n
-        let first = xlength - extra
-        let mut result = true
-        for (let mut i = 0n; i < first; i += 8n) {
-          if (WasmI64.ne(WasmI64.load(xptr + i, 8n), WasmI64.load(yptr + i, 8n))) {
-            result = false
-            break
-          }
-        }
-        if (result) {
-          for (let mut i = 0n; i < extra; i += 1n) {
-            if (WasmI32.load8U(xptr + first + i, 8n) != WasmI32.load8U(yptr + first + i, 8n)) {
-              result = false
-              break
-            }
-          }
-        }
-
-        result
+        Memory.compare(xptr + 8n, yptr + 8n, xlength) == 0n
       }
-    },
-    t when t == Tags._GRAIN_CHAR_HEAP_TAG => {
-      let byte = WasmI32.load8U(xptr, 4n)
-      let n = if ((byte & 0x80n) == 0x00n) {
-        1n
-      } else if ((byte & 0xF0n) == 0xF0n) {
-        4n
-      } else if ((byte & 0xE0n) == 0xE0n) {
-        3n
-      } else {
-        2n
-      }
-      // WebAssembly is little-endian, so bytes are in reverse order
-      let x = WasmI32.load(xptr, 4n) << ((4n - n) * 8n)
-      let y = WasmI32.load(yptr, 4n) << ((4n - n) * 8n)
-      x == y
     },
     t when t == Tags._GRAIN_TUPLE_HEAP_TAG => {
       let xsize = WasmI32.load(xptr, 4n)
@@ -170,7 +140,9 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
         let mut result = true
         let bytes = xsize * 4n
         for (let mut i = 0n; i < bytes; i += 4n) {
-          if (!equalHelp(WasmI32.load(xptr + i, 8n), WasmI32.load(yptr + i, 8n))) {
+          if (
+            !equalHelp(WasmI32.load(xptr + i, 8n), WasmI32.load(yptr + i, 8n))
+          ) {
             result = false
             break
           }
@@ -182,18 +154,40 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
         result
       }
     },
+    t when t == Tags._GRAIN_UINT32_HEAP_TAG || t == Tags._GRAIN_INT32_HEAP_TAG => {
+      let xval = WasmI32.load(xptr, 4n)
+      let yval = WasmI32.load(yptr, 4n)
+      xval == yval
+    },
+    // Float32 is handled by equalHelp directly
+    t when t == Tags._GRAIN_UINT64_HEAP_TAG => {
+      use WasmI64.{ (==) }
+      let xval = WasmI64.load(xptr, 8n)
+      let yval = WasmI64.load(yptr, 8n)
+      xval == yval
+    },
     _ => {
       // No other implementation
       xptr == yptr
-    }
+    },
   }
-}, equalHelp = (x, y) => {
-  if (((x & Tags._GRAIN_GENERIC_TAG_MASK) != 0n) && ((y & Tags._GRAIN_GENERIC_TAG_MASK) != 0n)) {
+}
+and equalHelp = (x, y) => {
+  if (
+    (x & Tags._GRAIN_GENERIC_TAG_MASK) != 0n &&
+    (y & Tags._GRAIN_GENERIC_TAG_MASK) != 0n
+  ) {
     // Short circuit for non-pointer values
     x == y
   } else if (isNumber(x)) {
     // Numbers have special equality rules, e.g. NaN != NaN
     numberEqual(x, y)
+  } else if (WasmI32.load(x, 0n) == Tags._GRAIN_FLOAT32_HEAP_TAG) {
+    // Short circuit for Float32 to correctly handle NaN != NaN
+    let xval = WasmF32.load(x, 4n)
+    let yval = WasmF32.load(y, 4n)
+    use WasmF32.{ (==) }
+    xval == yval
   } else {
     // Handle all other heap allocated things
     // Can short circuit if pointers are the same
@@ -201,10 +195,20 @@ let rec heapEqualHelp = (heapTag, xptr, yptr) => {
   }
 }
 
-export let rec equal = (x: a, y: a) => {
-  let ret = equalHelp(WasmI32.fromGrain(x), WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(x))
-  Memory.decRef(WasmI32.fromGrain(y))
-  Memory.decRef(WasmI32.fromGrain(equal))
-  ret
+/**
+ * Check that two values are equal. This checks for structural equality,
+ * so it also works for comparing things like tuples and lists.
+ *
+ * @param value1: The first operand
+ * @param value2: The second operand
+ * @returns `true` if the values are structurally equal or `false` otherwise
+ *
+ * @since v0.1.0
+ */
+@unsafe
+provide let equal = (value1: a, value2: a) => {
+  let value = equalHelp(WasmI32.fromGrain(value1), WasmI32.fromGrain(value2))
+  ignore(value1)
+  ignore(value2)
+  value
 }

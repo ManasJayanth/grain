@@ -3,7 +3,13 @@ open Ast_helper;
 open Typedtree;
 open Parsetree;
 
+type primitive_constant =
+  | HeapTypeMetadata
+  | ElideTypeInfo;
+
 type primitive =
+  | PrimitiveConstant(primitive_constant)
+  | Primitive0(prim0)
   | Primitive1(prim1)
   | Primitive2(prim2)
   | PrimitiveN(primn);
@@ -15,10 +21,17 @@ module PrimMap =
     let equal = (a, b) => String.compare(a, b) === 0;
   });
 
-let default_loc = default_loc_src^();
+let default_loc = Location.dummy_loc;
 
 let mkident = name =>
-  Exp.ident(Location.mkloc(Identifier.IdentName(name), default_loc));
+  Expression.ident(
+    ~loc=Location.dummy_loc,
+    ~core_loc=Location.dummy_loc,
+    Location.mkloc(
+      Identifier.IdentName(Location.mkloc(name, default_loc)),
+      default_loc,
+    ),
+  );
 let mkpatvar = name => {
   ppat_desc: PPatVar(Location.mkloc(name, default_loc)),
   ppat_loc: default_loc,
@@ -34,17 +47,57 @@ let pat_c = mkpatvar("c");
 let prim_map =
   PrimMap.of_seq(
     List.to_seq([
+      ("@heap.start", Primitive0(HeapStart)),
+      ("@heap.type_metadata", Primitive0(HeapTypeMetadata)),
+      ("@meta.elide_type_info", PrimitiveConstant(ElideTypeInfo)),
+      ("@allocate.int32", Primitive0(AllocateInt32)),
+      ("@allocate.int64", Primitive0(AllocateInt64)),
+      ("@allocate.uint32", Primitive0(AllocateUint32)),
+      ("@allocate.uint64", Primitive0(AllocateUint64)),
+      ("@allocate.float32", Primitive0(AllocateFloat32)),
+      ("@allocate.float64", Primitive0(AllocateFloat64)),
+      ("@allocate.rational", Primitive0(AllocateRational)),
+      ("@allocate.array", Primitive1(AllocateArray)),
+      ("@allocate.tuple", Primitive1(AllocateTuple)),
+      ("@allocate.bytes", Primitive1(AllocateBytes)),
+      ("@allocate.string", Primitive1(AllocateString)),
+      ("@allocate.bigInt", Primitive1(AllocateBigInt)),
+      ("@new.int32", Primitive1(NewInt32)),
+      ("@new.int64", Primitive1(NewInt64)),
+      ("@new.uint32", Primitive1(NewUint32)),
+      ("@new.uint64", Primitive1(NewUint64)),
+      ("@new.float32", Primitive1(NewFloat32)),
+      ("@new.float64", Primitive1(NewFloat64)),
+      ("@builtin.id", Primitive1(BuiltinId)),
+      ("@adt.load_variant", Primitive1(LoadAdtVariant)),
+      ("@string.size", Primitive1(StringSize)),
+      ("@bytes.size", Primitive1(BytesSize)),
+      ("@tag.simple_number", Primitive1(TagSimpleNumber)),
+      ("@untag.simple_number", Primitive1(UntagSimpleNumber)),
+      ("@tag.char", Primitive1(TagChar)),
+      ("@untag.char", Primitive1(UntagChar)),
+      ("@tag.int8", Primitive1(TagInt8)),
+      ("@untag.int8", Primitive1(UntagInt8)),
+      ("@tag.int16", Primitive1(TagInt16)),
+      ("@untag.int16", Primitive1(UntagInt16)),
+      ("@tag.uint8", Primitive1(TagUint8)),
+      ("@untag.uint8", Primitive1(UntagUint8)),
+      ("@tag.uint16", Primitive1(TagUint16)),
+      ("@untag.uint16", Primitive1(UntagUint16)),
       ("@not", Primitive1(Not)),
       ("@box", Primitive1(Box)),
       ("@unbox", Primitive1(Unbox)),
       ("@ignore", Primitive1(Ignore)),
       ("@assert", Primitive1(Assert)),
       ("@throw", Primitive1(Throw)),
+      ("@magic", Primitive1(Magic)),
+      ("@unreachable", Primitive0(Unreachable)),
       ("@is", Primitive2(Is)),
       ("@eq", Primitive2(Eq)),
       ("@and", Primitive2(And)),
       ("@or", Primitive2(Or)),
       ("@array.length", Primitive1(ArrayLength)),
+      ("@new.rational", Primitive2(NewRational)),
       ("@wasm.load_int32", Primitive2(WasmLoadI32({sz: 4, signed: false}))),
       (
         "@wasm.load_8_s_int32",
@@ -91,9 +144,9 @@ let prim_map =
         Primitive2(WasmLoadI64({sz: 4, signed: false})),
       ),
       ("@wasm.store_int64", PrimitiveN(WasmStoreI64({sz: 8}))),
-      ("@wasm.store_8_int64", PrimitiveN(WasmStoreI32({sz: 1}))),
-      ("@wasm.store_16_int64", PrimitiveN(WasmStoreI32({sz: 2}))),
-      ("@wasm.store_32_int64", PrimitiveN(WasmStoreI32({sz: 4}))),
+      ("@wasm.store_8_int64", PrimitiveN(WasmStoreI64({sz: 1}))),
+      ("@wasm.store_16_int64", PrimitiveN(WasmStoreI64({sz: 2}))),
+      ("@wasm.store_32_int64", PrimitiveN(WasmStoreI64({sz: 4}))),
       ("@wasm.load_float32", Primitive2(WasmLoadF32)),
       ("@wasm.store_float32", PrimitiveN(WasmStoreF32)),
       ("@wasm.load_float64", Primitive2(WasmLoadF64)),
@@ -1391,92 +1444,229 @@ let prim_map =
       ("@wasm.fromGrain", Primitive1(WasmFromGrain)),
       ("@wasm.toGrain", Primitive1(WasmToGrain)),
       ("@wasm.memory_grow", Primitive1(WasmMemoryGrow)),
-      ("@wasm.memory_size", PrimitiveN(WasmMemorySize)),
+      ("@wasm.memory_size", Primitive0(WasmMemorySize)),
       ("@wasm.memory_copy", PrimitiveN(WasmMemoryCopy)),
       ("@wasm.memory_fill", PrimitiveN(WasmMemoryFill)),
       ("@wasm.memory_compare", PrimitiveN(WasmMemoryCompare)),
     ]),
   );
 
+let active_memory_base = () => {
+  switch (Grain_utils.Config.memory_base^) {
+  | Some(x) => x
+  | None => Grain_utils.Config.default_memory_base
+  };
+};
+
 let transl_prim = (env, desc) => {
-  let loc = desc.tvd_loc;
+  let loc = desc.pprim_loc;
+  let core_loc = desc.pprim_loc;
 
   let prim =
-    try(PrimMap.find(prim_map, List.hd(desc.tvd_prim))) {
+    try(PrimMap.find(prim_map, desc.pprim_name.txt)) {
     | Not_found => failwith("This primitive does not exist.")
     };
 
-  let diable_gc = [(Location.mknoloc("disableGC"), [])];
-
-  let value =
-    switch (prim) {
-    | Primitive1(
-        (
-          WasmUnaryI32(_) | WasmUnaryI64(_) | WasmUnaryF32(_) | WasmUnaryF64(_) |
-          WasmMemoryGrow |
-          WasmFromGrain |
-          WasmToGrain
-        ) as p,
-      ) =>
-      Exp.lambda(
-        ~loc,
-        ~attributes=diable_gc,
-        [pat_a],
-        Exp.prim1(~loc, p, id_a),
-      )
-    | Primitive1(p) => Exp.lambda(~loc, [pat_a], Exp.prim1(~loc, p, id_a))
-    | Primitive2(
-        (
-          WasmBinaryI32(_) | WasmBinaryI64(_) | WasmBinaryF32(_) |
-          WasmBinaryF64(_) |
-          WasmLoadI32(_) |
-          WasmLoadI64(_) |
-          WasmLoadF32 |
-          WasmLoadF64
-        ) as p,
-      ) =>
-      Exp.lambda(
-        ~loc,
-        ~attributes=diable_gc,
-        [pat_a, pat_b],
-        Exp.prim2(~loc, p, id_a, id_b),
-      )
-    | Primitive2(p) =>
-      Exp.lambda(~loc, [pat_a, pat_b], Exp.prim2(~loc, p, id_a, id_b))
-    | PrimitiveN(WasmMemorySize as p) =>
-      Exp.lambda(~loc, ~attributes=diable_gc, [], Exp.primn(~loc, p, []))
-    | PrimitiveN(
-        (
-          WasmStoreI32(_) | WasmStoreI64(_) | WasmStoreF32 | WasmStoreF64 |
-          WasmMemoryCopy |
-          WasmMemoryFill |
-          WasmMemoryCompare
-        ) as p,
-      ) =>
-      Exp.lambda(
-        ~loc,
-        ~attributes=diable_gc,
-        [pat_a, pat_b, pat_c],
-        Exp.primn(~loc, p, [id_a, id_b, id_c]),
-      )
-    };
-
-  let binds = [
+  let disable_gc = [
     {
-      pvb_pat: {
-        ppat_desc: PPatVar(desc.tvd_name),
-        ppat_loc: loc,
-      },
-      pvb_expr: value,
-      pvb_loc: loc,
+      Asttypes.attr_name: Location.mknoloc("disableGC"),
+      attr_args: [],
+      attr_loc: Location.dummy_loc,
     },
   ];
-  let mut_flag = desc.tvd_val.val_mutable ? Mutable : Immutable;
-  let (binds, env) =
-    Typecore.type_binding(env, Nonrecursive, mut_flag, binds, None);
-  let (path, val_desc) =
-    Env.lookup_value(Identifier.IdentName(desc.tvd_name.txt), env);
-  // Ensure the binding has a proper value_description
-  let new_env = Env.add_value(Path.head(path), desc.tvd_val, env);
-  (binds, new_env);
+
+  let lambda_arg = pat => {
+    pla_label: Unlabeled,
+    pla_pattern: pat,
+    pla_default: None,
+    pla_loc: Location.dummy_loc,
+  };
+
+  let (value, typ) =
+    switch (prim) {
+    | PrimitiveConstant(const) =>
+      let (value, typ, attributes) =
+        switch (const) {
+        // [NOTE] should be kept in sync with `runtime_heap_ptr` and friends in `compcore.re`
+        | HeapTypeMetadata => (
+            Constant.wasmi32(
+              Location.mknoloc(string_of_int(active_memory_base() + 0x8)),
+            ),
+            Builtin_types.type_wasmi32,
+            disable_gc,
+          )
+        | ElideTypeInfo => (
+            Constant.bool(Grain_utils.Config.elide_type_info^),
+            Builtin_types.type_bool,
+            [],
+          )
+        };
+      (Expression.constant(~loc, ~core_loc, ~attributes, value), typ);
+    | Primitive0(p) =>
+      let attributes =
+        switch (p) {
+        | AllocateInt32
+        | AllocateInt64
+        | AllocateUint32
+        | AllocateUint64
+        | AllocateFloat32
+        | AllocateFloat64
+        | AllocateRational
+        | WasmMemorySize
+        | Unreachable
+        | HeapStart
+        | HeapTypeMetadata => disable_gc
+        };
+      (
+        Expression.lambda(
+          ~loc,
+          ~core_loc,
+          ~attributes,
+          [],
+          Expression.prim0(~loc, ~core_loc, p),
+        ),
+        Typecore.prim0_type(p),
+      );
+    | Primitive1(BuiltinId as p) =>
+      // This primitive must always be inlined, so we do not generate a lambda
+      (
+        Expression.constant(~loc, ~core_loc, PConstVoid),
+        Typecore.prim1_type(p),
+      )
+    | Primitive1(p) =>
+      let attributes =
+        switch (p) {
+        | WasmUnaryI32(_)
+        | WasmUnaryI64(_)
+        | WasmUnaryF32(_)
+        | WasmUnaryF64(_)
+        | WasmMemoryGrow
+        | WasmFromGrain
+        | WasmToGrain => disable_gc
+        | AllocateArray
+        | AllocateTuple
+        | AllocateBytes
+        | AllocateString
+        | AllocateBigInt
+        | StringSize
+        | BytesSize
+        | ArrayLength
+        | NewInt32
+        | NewInt64
+        | NewUint32
+        | NewUint64
+        | NewFloat32
+        | NewFloat64
+        | LoadAdtVariant
+        | TagSimpleNumber
+        | UntagSimpleNumber
+        | TagChar
+        | UntagChar
+        | TagInt8
+        | UntagInt8
+        | TagInt16
+        | UntagInt16
+        | TagUint8
+        | UntagUint8
+        | TagUint16
+        | UntagUint16
+        | Not
+        | Box
+        | BoxBind
+        | Unbox
+        | UnboxBind
+        | Ignore
+        | Assert
+        | Throw
+        | Magic
+        | BuiltinId => []
+        };
+      (
+        Expression.lambda(
+          ~loc,
+          ~core_loc,
+          ~attributes,
+          [lambda_arg(pat_a)],
+          Expression.prim1(~loc, ~core_loc, p, id_a),
+        ),
+        Typecore.prim1_type(p),
+      );
+    | Primitive2(p) =>
+      let attributes =
+        switch (p) {
+        | WasmBinaryI32(_)
+        | WasmBinaryI64(_)
+        | WasmBinaryF32(_)
+        | WasmBinaryF64(_)
+        | WasmLoadI32(_)
+        | WasmLoadI64(_)
+        | WasmLoadF32
+        | WasmLoadF64
+        | NewRational => disable_gc
+        | Is
+        | Eq
+        | And
+        | Or => []
+        };
+      (
+        Expression.lambda(
+          ~loc,
+          ~core_loc,
+          ~attributes,
+          [lambda_arg(pat_a), lambda_arg(pat_b)],
+          Expression.prim2(~loc, ~core_loc, p, id_a, id_b),
+        ),
+        Typecore.prim2_type(p),
+      );
+    | PrimitiveN(p) =>
+      let attributes =
+        switch (p) {
+        | WasmStoreI32(_)
+        | WasmStoreI64(_)
+        | WasmStoreF32
+        | WasmStoreF64
+        | WasmMemoryCopy
+        | WasmMemoryFill
+        | WasmMemoryCompare => disable_gc
+        };
+      (
+        Expression.lambda(
+          ~loc,
+          ~core_loc,
+          ~attributes,
+          [lambda_arg(pat_a), lambda_arg(pat_b), lambda_arg(pat_c)],
+          Expression.primn(~loc, ~core_loc, p, [id_a, id_b, id_c]),
+        ),
+        Typecore.primn_type(p),
+      );
+    };
+
+  let id = Ident.create(desc.pprim_ident.txt);
+  let value_description = {
+    Types.val_type: typ,
+    val_repr: Type_utils.repr_of_type(env, typ),
+    val_kind: TValPrim(desc.pprim_name.txt),
+    val_loc: loc,
+    val_internalpath: PIdent(id),
+    val_fullpath: Path.PIdent(id),
+    val_mutable: false,
+    val_global: true,
+  };
+
+  let value = Typecore.type_expression(env, value);
+  let env = Env.add_value(id, value_description, env);
+  let binds = [
+    {
+      vb_pat: {
+        pat_desc: TPatVar(id, desc.pprim_ident),
+        pat_loc: loc,
+        pat_extra: [],
+        pat_type: typ,
+        pat_env: env,
+      },
+      vb_expr: value,
+      vb_loc: loc,
+    },
+  ];
+  (binds, id, value_description, env);
 };

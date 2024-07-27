@@ -1,6 +1,6 @@
 {
   "name": "@grain/stdlib",
-  "version": "0.4.4",
+  "version": "0.6.4",
   "description": "The standard library for the Grain language.",
   "license": "MIT",
   "homepage": "https://grain-lang.org",
@@ -18,7 +18,7 @@
     "directory": "stdlib"
   },
   "engines": {
-    "node": ">=14"
+    "node": ">=18.15"
   },
   "main": "index.js",
   "files": [
@@ -27,7 +27,7 @@
     "index.js"
   ],
   "scripts": {
-    "clean": "del-cli '**/*.wasm' '**/*.wat' '**/*.modsig'"
+    "clean": "del-cli \"**/*.wasm\" \"**/*.wat\" \"**/*.modsig\""
   },
   "dependencies": {},
   "devDependencies": {

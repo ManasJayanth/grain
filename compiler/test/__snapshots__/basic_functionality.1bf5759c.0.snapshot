@@ -1,96 +1,72 @@
 basic functionality › unsafe_wasm_globals
 (module
- (type $none_=>_none (func))
  (type $none_=>_i32 (func (result i32)))
- (type $i32_i32_=>_i32 (func (param i32 i32) (result i32)))
- (type $i32_i64_=>_i32 (func (param i32 i64) (result i32)))
- (type $i32_f32_=>_i32 (func (param i32 f32) (result i32)))
+ (type $none_=>_none (func))
  (type $i32_f64_=>_i32 (func (param i32 f64) (result i32)))
- (import \"_grainEnv\" \"mem\" (memory $0 0))
- (import \"_grainEnv\" \"tbl\" (table $tbl 0 funcref))
- (import \"_grainEnv\" \"relocBase\" (global $import__grainEnv_0_relocBase_0 i32))
- (import \"GRAIN$MODULE$unsafeWasmGlobalsExports\" \"GRAIN$EXPORT$_F64_VAL\" (global $import_unsafeWasmGlobalsExports_1187__F64_VAL_1188 (mut f64)))
- (import \"GRAIN$MODULE$runtime/unsafe/printWasm\" \"GRAIN$EXPORT$printF64\" (global $import_runtime/unsafe/printWasm_1189_printF64_1190 (mut i32)))
- (import \"GRAIN$MODULE$unsafeWasmGlobalsExports\" \"GRAIN$EXPORT$_F32_VAL\" (global $import_unsafeWasmGlobalsExports_1191__F32_VAL_1192 (mut f32)))
- (import \"GRAIN$MODULE$runtime/unsafe/printWasm\" \"GRAIN$EXPORT$printF32\" (global $import_runtime/unsafe/printWasm_1193_printF32_1194 (mut i32)))
- (import \"GRAIN$MODULE$unsafeWasmGlobalsExports\" \"GRAIN$EXPORT$_I64_VAL\" (global $import_unsafeWasmGlobalsExports_1195__I64_VAL_1196 (mut i64)))
- (import \"GRAIN$MODULE$runtime/unsafe/printWasm\" \"GRAIN$EXPORT$printI64\" (global $import_runtime/unsafe/printWasm_1197_printI64_1198 (mut i32)))
- (import \"GRAIN$MODULE$unsafeWasmGlobalsExports\" \"GRAIN$EXPORT$_I32_VAL\" (global $import_unsafeWasmGlobalsExports_1199__I32_VAL_1200 (mut i32)))
- (import \"GRAIN$MODULE$runtime/unsafe/printWasm\" \"GRAIN$EXPORT$printI32\" (global $import_runtime/unsafe/printWasm_1201_printI32_1202 (mut i32)))
- (global $global_1 i32 (i32.const 0))
+ (type $i32_f32_=>_i32 (func (param i32 f32) (result i32)))
+ (type $i32_i64_=>_i32 (func (param i32 i64) (result i32)))
+ (type $i32_i32_=>_i32 (func (param i32 i32) (result i32)))
+ (import \"_genv\" \"tbl\" (table $tbl 0 funcref))
+ (import \"_genv\" \"relocBase\" (global $relocBase_0 i32))
+ (import \"_genv\" \"moduleRuntimeId\" (global $moduleRuntimeId_0 i32))
+ (import \"_genv\" \"runtimeHeapStart\" (global $runtimeHeapStart_0 i32))
+ (import \"_genv\" \"runtimeHeapNextPtr\" (global $runtimeHeapNextPtr_0 (mut i32)))
+ (import \"_genv\" \"metadataPtr\" (global $metadataPtr_0 i32))
+ (import \"GRAIN$MODULE$unsafeWasmGlobalsExports.gr\" \"GRAIN$EXPORT$_F64_VAL\" (global $_F64_VAL_1159 (mut f64)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"GRAIN$EXPORT$printF64\" (global $printF64_1158 (mut i32)))
+ (import \"GRAIN$MODULE$unsafeWasmGlobalsExports.gr\" \"GRAIN$EXPORT$_F32_VAL\" (global $_F32_VAL_1157 (mut f32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"GRAIN$EXPORT$printF32\" (global $printF32_1156 (mut i32)))
+ (import \"GRAIN$MODULE$unsafeWasmGlobalsExports.gr\" \"GRAIN$EXPORT$_I64_VAL\" (global $_I64_VAL_1155 (mut i64)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"GRAIN$EXPORT$printI64\" (global $printI64_1154 (mut i32)))
+ (import \"GRAIN$MODULE$unsafeWasmGlobalsExports.gr\" \"GRAIN$EXPORT$_I32_VAL\" (global $_I32_VAL_1153 (mut i32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"GRAIN$EXPORT$printI32\" (global $printI32_1152 (mut i32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"printF64\" (func $printF64_1158 (param i32 f64) (result i32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"printF32\" (func $printF32_1156 (param i32 f32) (result i32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"printI64\" (func $printI64_1154 (param i32 i64) (result i32)))
+ (import \"GRAIN$MODULE$runtime/debugPrint.gr\" \"printI32\" (func $printI32_1152 (param i32 i32) (result i32)))
+ (global $GRAIN$TABLE_SIZE i32 (i32.const 0))
+ (memory $0 0)
+ (elem $elem (global.get $relocBase_0))
  (export \"memory\" (memory $0))
  (export \"_gmain\" (func $_gmain))
  (export \"_start\" (func $_start))
- (export \"GRAIN$TABLE_SIZE\" (global $global_1))
- (func $_gmain (; has Stack IR ;) (result i32)
+ (export \"GRAIN$TABLE_SIZE\" (global $GRAIN$TABLE_SIZE))
+ (func $_gmain (result i32)
   (local $0 i32)
-  (drop
-   (call_indirect (type $i32_i32_=>_i32)
-    (local.tee $0
-     (tuple.extract 0
-      (tuple.make
-       (global.get $import_runtime/unsafe/printWasm_1201_printI32_1202)
-       (i32.const 0)
-      )
-     )
-    )
-    (global.get $import_unsafeWasmGlobalsExports_1199__I32_VAL_1200)
-    (i32.load offset=8
-     (local.get $0)
+  (local $1 i32)
+  (local $2 i32)
+  (local $3 i64)
+  (local $4 f32)
+  (local $5 f64)
+  (block $compile_block.1
+   (drop
+    (call $printI32_1152
+     (global.get $printI32_1152)
+     (global.get $_I32_VAL_1153)
     )
    )
-  )
-  (drop
-   (call_indirect (type $i32_i64_=>_i32)
-    (local.tee $0
-     (tuple.extract 0
-      (tuple.make
-       (global.get $import_runtime/unsafe/printWasm_1197_printI64_1198)
-       (local.get $0)
-      )
-     )
-    )
-    (global.get $import_unsafeWasmGlobalsExports_1195__I64_VAL_1196)
-    (i32.load offset=8
-     (local.get $0)
+   (drop
+    (call $printI64_1154
+     (global.get $printI64_1154)
+     (global.get $_I64_VAL_1155)
     )
    )
-  )
-  (drop
-   (call_indirect (type $i32_f32_=>_i32)
-    (local.tee $0
-     (tuple.extract 0
-      (tuple.make
-       (global.get $import_runtime/unsafe/printWasm_1193_printF32_1194)
-       (local.get $0)
-      )
-     )
-    )
-    (global.get $import_unsafeWasmGlobalsExports_1191__F32_VAL_1192)
-    (i32.load offset=8
-     (local.get $0)
+   (drop
+    (call $printF32_1156
+     (global.get $printF32_1156)
+     (global.get $_F32_VAL_1157)
     )
    )
-  )
-  (call_indirect (type $i32_f64_=>_i32)
-   (local.tee $0
-    (tuple.extract 0
-     (tuple.make
-      (global.get $import_runtime/unsafe/printWasm_1189_printF64_1190)
-      (local.get $0)
-     )
-    )
-   )
-   (global.get $import_unsafeWasmGlobalsExports_1187__F64_VAL_1188)
-   (i32.load offset=8
-    (local.get $0)
+   (return_call $printF64_1158
+    (global.get $printF64_1158)
+    (global.get $_F64_VAL_1159)
    )
   )
  )
- (func $_start (; has Stack IR ;)
+ (func $_start
   (drop
    (call $_gmain)
   )
  )
- ;; custom section \"cmi\", size 377
+ ;; custom section \"cmi\", size 509
 )

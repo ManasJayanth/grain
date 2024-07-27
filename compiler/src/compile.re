@@ -3,6 +3,7 @@ open Grain_typed;
 open Grain_middle_end;
 open Grain_codegen;
 open Grain_linking;
+open Grain_utils;
 open Optimize;
 
 type input_source =
@@ -13,6 +14,7 @@ type compilation_state_desc =
   | Initial(input_source)
   | Parsed(Parsetree.parsed_program)
   | WellFormed(Parsetree.parsed_program)
+  | DependenciesCompiled(Parsetree.parsed_program)
   | TypeChecked(Typedtree.typed_program)
   | TypedWellFormed(Typedtree.typed_program)
   | Linearized(Anftree.anf_program)
@@ -39,24 +41,27 @@ type error =
 
 exception InlineFlagsError(Location.t, error);
 
-/** `remove_extension` new enough that we should just use this */
-
-let safe_remove_extension = name =>
-  try(Filename.chop_extension(name)) {
-  | Invalid_argument(_) => name
-  };
-
-let default_output_filename = name =>
-  safe_remove_extension(name) ++ ".gr.wasm";
-
-let default_assembly_filename = name =>
-  safe_remove_extension(name) ++ ".wast";
+let default_output_filename = name => name ++ ".wasm";
 
 let default_mashtree_filename = name =>
-  safe_remove_extension(name) ++ ".mashtree";
+  Filepath.String.remove_extension(name) ++ ".mashtree";
 
 let compile_prog = p =>
   Compcore.module_to_bytes @@ Compcore.compile_wasm_module(p);
+
+let save_mashed = (mashed, outfile) => {
+  switch (outfile) {
+  | Some(outfile) =>
+    let outfile = default_mashtree_filename(outfile);
+    Grain_utils.Fs_access.ensure_parent_directory_exists(outfile);
+    let mash_string =
+      Sexplib.Sexp.to_string_hum @@ Mashtree.sexp_of_mash_program(mashed);
+    let oc = open_out(outfile);
+    output_string(oc, mash_string);
+    close_out(oc);
+  | None => ()
+  };
+};
 
 let log_state = state =>
   if (Grain_utils.Config.verbose^) {
@@ -74,6 +79,7 @@ let log_state = state =>
       prerr_string("\nParsed program:\n");
       prerr_sexp(Grain_parsing.Parsetree.sexp_of_parsed_program, p);
     | WellFormed(_) => prerr_string("\nWell-Formedness passed")
+    | DependenciesCompiled(_) => prerr_string("\nDependencies compiled")
     | TypeChecked(typed_mod) =>
       prerr_string("\nTyped program:\n");
       prerr_sexp(Grain_typed.Typedtree.sexp_of_typed_program, typed_mod);
@@ -96,43 +102,36 @@ let log_state = state =>
     prerr_string("\n\n");
   };
 
-let apply_inline_flags = (prog: Parsetree.parsed_program) => {
-  switch (prog.comments) {
-  | [Block({cmt_content, cmt_loc}), ..._] =>
-    Grain_utils.Config.apply_inline_flags(
-      ~on_error=
-        err => {
-          switch (err) {
-          | `Help =>
-            raise(InlineFlagsError(cmt_loc, Cannot_use_help_or_version))
-          | `Message(msg) =>
-            raise(InlineFlagsError(cmt_loc, Cannot_parse_inline_flags(msg)))
-          }
-        },
-      cmt_content,
-    )
-  | _ => ()
-  };
-};
-
 let next_state = (~is_root_file=false, {cstate_desc, cstate_filename} as cs) => {
   let cstate_desc =
     switch (cstate_desc) {
     | Initial(input) =>
-      let (name, lexbuf, cleanup) =
+      let (name, lexbuf, source, cleanup) =
         switch (input) {
         | InputString(str) => (
             cs.cstate_filename,
-            Lexing.from_string(str),
+            Sedlexing.Utf8.from_string(str),
+            (() => str),
             (() => ()),
           )
         | InputFile(name) =>
           let ic = open_in(name);
-          (Some(name), Lexing.from_channel(ic), (() => close_in(ic)));
+          let source = () => {
+            let ic = open_in_bin(name);
+            let source = really_input_string(ic, in_channel_length(ic));
+            close_in(ic);
+            source;
+          };
+          (
+            Some(name),
+            Sedlexing.Utf8.from_channel(ic),
+            source,
+            (() => close_in(ic)),
+          );
         };
 
       let parsed =
-        try(Driver.parse(~name?, lexbuf)) {
+        try(Driver.parse(~name?, lexbuf, source)) {
         | _ as e =>
           cleanup();
           raise(e);
@@ -141,27 +140,40 @@ let next_state = (~is_root_file=false, {cstate_desc, cstate_filename} as cs) => 
       cleanup();
       Parsed(parsed);
     | Parsed(p) =>
-      apply_inline_flags(p);
-      if (is_root_file) {
-        Grain_utils.Config.set_root_config();
-      };
+      let has_attr = name =>
+        List.exists(
+          attr => attr.Asttypes.attr_name.txt == name,
+          p.attributes,
+        );
+      Grain_utils.Config.apply_attribute_flags(
+        ~no_pervasives=has_attr("noPervasives"),
+        ~runtime_mode=has_attr("runtimeMode"),
+      );
+
       Well_formedness.check_well_formedness(p);
       WellFormed(p);
-    | WellFormed(p) => TypeChecked(Typemod.type_implementation(p))
+    | WellFormed(p) =>
+      if (is_root_file) {
+        let base_file = Option.value(~default="", cstate_filename);
+        Module_resolution.compile_dependency_graph(
+          ~base_file,
+          Driver.read_imports(p),
+        );
+      };
+      DependenciesCompiled(p);
+    | DependenciesCompiled(p) => TypeChecked(Typemod.type_implementation(p))
     | TypeChecked(typed_mod) =>
       Typed_well_formedness.check_well_formedness(typed_mod);
       TypedWellFormed(typed_mod);
     | TypedWellFormed(typed_mod) =>
       Linearized(Linearize.transl_anf_module(typed_mod))
-    | Linearized(anfed) =>
-      switch (Grain_utils.Config.optimization_level^) {
-      | Level_one
-      | Level_two
-      | Level_three => Optimized(Optimize.optimize_program(anfed))
-      | Level_zero => Optimized(anfed)
-      }
+    | Linearized(anfed) => Optimized(Optimize.optimize_program(anfed))
     | Optimized(optimized) =>
-      Mashed(Transl_anf.transl_anf_program(optimized))
+      let mashed = Transl_anf.transl_anf_program(optimized);
+      if (Config.debug^) {
+        save_mashed(mashed, cs.cstate_outfile);
+      };
+      Mashed(mashed);
     | Mashed(mashed) =>
       Compiled(Compmod.compile_wasm_module(~name=?cstate_filename, mashed))
     | Compiled(compiled) =>
@@ -259,19 +271,28 @@ let compile_wasi_polyfill = () => {
   switch (Grain_utils.Config.wasi_polyfill^) {
   | Some(file) =>
     Grain_utils.Config.preserve_config(() => {
-      Grain_utils.Config.compilation_mode := Some("runtime");
+      Grain_utils.Config.compilation_mode := Grain_utils.Config.Runtime;
       let cstate = {
         cstate_desc: Initial(InputFile(file)),
         cstate_filename: Some(file),
         cstate_outfile: Some(default_output_filename(file)),
       };
-      ignore(compile_resume(~hook=stop_after_object_file_emitted, cstate));
+      ignore(
+        compile_resume(
+          ~is_root_file=true,
+          ~hook=stop_after_object_file_emitted,
+          cstate,
+        ),
+      );
     })
   | None => ()
   };
 };
 
 let reset_compiler_state = () => {
+  Driver.reset();
+  Ident.setup();
+  Ctype.reset_levels();
   Env.clear_imports();
   Module_resolution.clear_dependency_graph();
   Grain_utils.Fs_access.flush_all_cached_data();
@@ -284,12 +305,17 @@ let compile_string =
     reset_compiler_state();
     compile_wasi_polyfill();
   };
+  if (is_root_file) {
+    Grain_utils.Config.set_root_config();
+  };
   let cstate = {
     cstate_desc: Initial(InputString(str)),
     cstate_filename: name,
     cstate_outfile: outfile,
   };
-  compile_resume(~is_root_file, ~hook?, cstate);
+  Grain_utils.Config.preserve_all_configs(() =>
+    compile_resume(~is_root_file, ~hook?, cstate)
+  );
 };
 
 let compile_file =
@@ -298,29 +324,20 @@ let compile_file =
     reset_compiler_state();
     compile_wasi_polyfill();
   };
+  if (is_root_file) {
+    Grain_utils.Config.set_root_config();
+  };
   let cstate = {
     cstate_desc: Initial(InputFile(filename)),
     cstate_filename: Some(filename),
     cstate_outfile: outfile,
   };
-  compile_resume(~is_root_file, ~hook?, cstate);
+  Grain_utils.Config.preserve_all_configs(() =>
+    compile_resume(~is_root_file, ~hook?, cstate)
+  );
 };
 
 let anf = Linearize.transl_anf_module;
-
-let save_mashed = (f, outfile) =>
-  switch (compile_file(~is_root_file=false, ~hook=stop_after_mashed, f)) {
-  | {cstate_desc: Mashed(mashed)} =>
-    Grain_utils.Files.ensure_parent_directory_exists(outfile);
-    let mash_string =
-      Sexplib.Sexp.to_string_hum @@ Mashtree.sexp_of_mash_program(mashed);
-    let oc = open_out(outfile);
-    output_string(oc, mash_string);
-    close_out(oc);
-  | _ => failwith("Should be impossible")
-  };
-
-let free_vars = anfed => Ident.Set.elements @@ Anf_utils.anf_free_vars(anfed);
 
 let report_error = loc =>
   Location.(

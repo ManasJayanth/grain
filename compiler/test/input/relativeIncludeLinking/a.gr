@@ -1,0 +1,7 @@
+module A
+
+from "./mutExport.gr" include MutExport
+
+MutExport.x := unbox(MutExport.x) + 1
+
+provide let readX = () => unbox(MutExport.x)

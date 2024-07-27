@@ -1,0 +1,10 @@
+module Constraints
+
+from "list" include List
+let test = test => {
+  // Comments
+  List.forEach(i => {
+    // Comment In ForEach
+    print(i)
+  }, test: List<Number>)
+}

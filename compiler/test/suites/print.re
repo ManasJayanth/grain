@@ -1,17 +1,22 @@
 open Grain_tests.TestFramework;
 open Grain_tests.Runner;
 
-describe("print", ({test}) => {
-  let assertRun = makeRunner(test);
+describe("print", ({test, testSkip}) => {
+  let test_or_skip =
+    Sys.backend_type == Other("js_of_ocaml") ? testSkip : test;
+
+  let assertRun = makeRunner(test_or_skip);
 
   assertRun(
+    ~config_fn=() => {Grain_utils.Config.elide_type_info := true},
     "elided_type_info_1",
-    "/* grainc-flags --elide-type-info */ enum Foo { Foo }; print(Foo)",
+    "enum Foo { Foo }; print(Foo)",
     "<enum value>\n",
   );
   assertRun(
+    ~config_fn=() => {Grain_utils.Config.elide_type_info := true},
     "elided_type_info_2",
-    "/* grainc-flags --elide-type-info */ record Foo { foo: String }; print({ foo: \"foo\" })",
+    "record Foo { foo: String }; print({ foo: \"foo\" })",
     "<record value>\n",
   );
   assertRun(
@@ -31,7 +36,7 @@ describe("print", ({test}) => {
   );
   assertRun(
     "print_issue892_1",
-    "import List from \"list\"\nlet a = [1, 2]\nlet b = List.reverse(a)\nprint(a)\nprint(b)\n",
+    "from \"list\" include List\nlet a = [1, 2]\nlet b = List.reverse(a)\nprint(a)\nprint(b)\n",
     "[1, 2]\n[2, 1]\n",
   );
   assertRun(
