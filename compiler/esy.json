@@ -7,7 +7,9 @@
       "includePackages": ["root"],
       "bin": ["grainc.exe"]
     },
-    "build": ["dune build @native --no-buffer"],
+    "build": [
+      "dune build -p grain,grainc,graindoc,grainformat,grainlsp,grain_language_server,grain_formatting,grain_utils,grain_diagnostics,grain_typed,grain_parsing,grain_middle_end,grain_linking,grain_codegen @native --no-buffer"
+    ],
     "buildEnv": {
       "DUNE_BUILD_DIR": "#{self.target_dir}",
       "GRAIN_STDLIB": "#{self.root / '..' / 'stdlib'}",

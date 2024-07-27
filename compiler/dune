@@ -1,7 +1,7 @@
 (alias
  (name native)
  (deps grainc/grainc.exe graindoc/graindoc.exe grainformat/grainformat.exe
-   grainlsp/grainlsp.exe test/test.exe))
+   grainlsp/grainlsp.exe))
 
 (alias
  (name js)
